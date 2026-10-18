@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { Submissao } from '../types';
-import { FileText, Eye, CheckCircle2, Clock, Calendar, MapPin, Plus, ArrowLeft } from 'lucide-react';
+import { FileText, Eye, Calendar, Plus, ArrowLeft } from 'lucide-react';
 
 export const SupervisorHistoryView: React.FC = () => {
   const { userSession, submissoes, setActiveScreen } = useApp();
@@ -20,7 +20,7 @@ export const SupervisorHistoryView: React.FC = () => {
         <div>
           <button
             onClick={() => setActiveScreen('formulario')}
-            className="inline-flex items-center gap-1.5 text-xs font-semibold text-orange-600 hover:text-orange-800 mb-2 transition"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#2667ff] hover:text-[#1a53db] mb-2 transition cursor-pointer"
           >
             <ArrowLeft className="w-4 h-4" />
             <span>Voltar ao Formulário</span>
@@ -35,7 +35,7 @@ export const SupervisorHistoryView: React.FC = () => {
 
         <button
           onClick={() => setActiveScreen('formulario')}
-          className="bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs sm:text-sm px-4 py-2.5 rounded-lg flex items-center justify-center gap-2 shadow-xs transition"
+          className="bg-[#2667ff] hover:bg-[#1a53db] text-white font-bold text-xs sm:text-sm px-4 py-2.5 rounded-lg flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
         >
           <Plus className="w-4 h-4" />
           <span>Preencher Nova Ficha</span>
@@ -52,7 +52,7 @@ export const SupervisorHistoryView: React.FC = () => {
 
         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs">
           <div className="text-xs font-semibold text-slate-500 uppercase">Fichas / Bairros</div>
-          <div className="text-2xl font-black text-orange-600 mt-1">{totalFichasMinhas}</div>
+          <div className="text-2xl font-black text-[#2667ff] mt-1">{totalFichasMinhas}</div>
           <div className="text-[11px] text-slate-400 mt-1">Bairros e áreas cobertas</div>
         </div>
 
@@ -72,7 +72,7 @@ export const SupervisorHistoryView: React.FC = () => {
 
         {mySubmissions.length === 0 ? (
           <div className="p-12 text-center text-slate-400">
-            <FileText className="w-12 h-12 mx-auto mb-3 opacity-30 text-orange-500" />
+            <FileText className="w-12 h-12 mx-auto mb-3 opacity-30 text-[#2667ff]" />
             <p className="text-sm font-medium text-slate-600">Ainda não enviou nenhuma ficha.</p>
             <p className="text-xs mt-1">Clique em "Preencher Nova Ficha" para registar os dados de hoje.</p>
           </div>
@@ -82,7 +82,7 @@ export const SupervisorHistoryView: React.FC = () => {
               <div key={sub.id} className="p-4 sm:p-5 hover:bg-slate-50 transition flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
-                    <Calendar className="w-4 h-4 text-orange-600" />
+                    <Calendar className="w-4 h-4 text-[#2667ff]" />
                     <span className="font-bold text-slate-900 text-sm">Data da Atividade: {sub.data}</span>
                     <span className={`badge ${sub.status === 'Validado' ? 'badge-success' : 'badge-warning'}`}>
                       {sub.status}
@@ -94,7 +94,7 @@ export const SupervisorHistoryView: React.FC = () => {
                     <span>&bull;</span>
                     <span><strong>Bairros:</strong> {sub.fichas.map((f) => f.bairro).join(', ')}</span>
                     <span>&bull;</span>
-                    <span><strong>Pessoas (Sim):</strong> <strong className="text-orange-700">{sub.totalSim}</strong></span>
+                    <span><strong>Pessoas (Sim):</strong> <strong className="text-[#1a53db]">{sub.totalSim}</strong></span>
                     <span>&bull;</span>
                     <span><strong>Não:</strong> {sub.totalNao}</span>
                   </div>
@@ -102,7 +102,7 @@ export const SupervisorHistoryView: React.FC = () => {
 
                 <button
                   onClick={() => setSelectedSub(sub)}
-                  className="px-3.5 py-1.5 rounded-lg border border-slate-200 hover:border-orange-300 bg-white hover:bg-orange-50 text-xs font-semibold text-slate-700 hover:text-orange-700 transition flex items-center justify-center gap-1.5 self-start sm:self-center"
+                  className="px-3.5 py-1.5 rounded-lg border border-slate-200 hover:border-[#bfdbfe] bg-white hover:bg-[#eff4ff] text-xs font-semibold text-slate-700 hover:text-[#1a53db] transition flex items-center justify-center gap-1.5 self-start sm:self-center cursor-pointer"
                 >
                   <Eye className="w-3.5 h-3.5" />
                   <span>Ver Detalhes</span>
@@ -128,7 +128,7 @@ export const SupervisorHistoryView: React.FC = () => {
               </div>
               <button
                 onClick={() => setSelectedSub(null)}
-                className="text-slate-400 hover:text-slate-600 text-2xl font-bold"
+                className="text-slate-400 hover:text-slate-600 text-2xl font-bold cursor-pointer"
               >
                 &times;
               </button>
@@ -139,7 +139,7 @@ export const SupervisorHistoryView: React.FC = () => {
                 <div key={f.id || i} className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2 text-xs">
                   <div className="flex justify-between items-center font-bold text-slate-800 text-sm border-b border-slate-200 pb-1.5">
                     <span>Ficha {f.numeroFicha || i + 1}: Bairro {f.bairro}</span>
-                    <span className="text-orange-700">Comuna: {f.comuna}</span>
+                    <span className="text-[#1a53db]">Comuna: {f.comuna}</span>
                   </div>
 
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
@@ -153,7 +153,7 @@ export const SupervisorHistoryView: React.FC = () => {
                     <div>Outros: <strong>{f.outros_pessoas} pess.</strong></div>
                   </div>
 
-                  <div className="flex justify-between items-center bg-orange-100/70 p-2 rounded text-slate-900 font-bold mt-2">
+                  <div className="flex justify-between items-center bg-[#eff4ff] border border-[#bfdbfe] p-2 rounded text-slate-900 font-bold mt-2">
                     <span>Total Sim: {f.total_sim}</span>
                     <span>Total Não: {f.total_nao}</span>
                   </div>
@@ -164,7 +164,7 @@ export const SupervisorHistoryView: React.FC = () => {
             <div className="border-t border-slate-200 pt-3 mt-4 text-right">
               <button
                 onClick={() => setSelectedSub(null)}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-semibold text-xs rounded-lg"
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-semibold text-xs rounded-lg cursor-pointer"
               >
                 Fechar
               </button>

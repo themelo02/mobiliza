@@ -6,134 +6,154 @@ import {
   collection,
   doc,
   setDoc,
+  getDoc,
   deleteDoc,
   updateDoc,
   onSnapshot,
   getDocs,
+  writeBatch,
 } from 'firebase/firestore';
 
 interface AppContextType {
   supervisores: Supervisor[];
   submissoes: Submissao[];
   userSession: UserSession | null;
+  adminCode: string;
   activeScreen: 'formulario' | 'dashboard' | 'historico';
   isFirebaseConnected: boolean;
+  isLoadingData: boolean;
   setActiveScreen: (screen: 'formulario' | 'dashboard' | 'historico') => void;
   login: (codigo: string, senha?: string) => { success: boolean; message?: string };
   logout: () => void;
   quickLoginAsSupervisor: (supervisorId: string) => void;
   quickLoginAsAdmin: () => void;
-  addSupervisor: (data: Omit<Supervisor, 'id' | 'dataCriacao'>) => Supervisor;
-  updateSupervisor: (id: string, data: Partial<Supervisor>) => void;
-  deleteSupervisor: (id: string) => void;
-  addSubmissao: (sub: Omit<Submissao, 'id' | 'dataEnvio'>) => Submissao;
-  updateSubmissaoStatus: (id: string, status: 'Validado' | 'Pendente' | 'Em Revisão') => void;
-  deleteSubmissao: (id: string) => void;
-  resetToInitialData: () => void;
+  updateAdminCode: (newCode: string) => Promise<{ success: boolean; message?: string }>;
+  addSupervisor: (data: Omit<Supervisor, 'id' | 'dataCriacao'>) => Promise<Supervisor>;
+  updateSupervisor: (id: string, data: Partial<Supervisor>) => Promise<void>;
+  deleteSupervisor: (id: string) => Promise<void>;
+  addSubmissao: (sub: Omit<Submissao, 'id' | 'dataEnvio'>) => Promise<Submissao>;
+  updateSubmissaoStatus: (id: string, status: 'Validado' | 'Pendente' | 'Em Revisão') => Promise<void>;
+  deleteSubmissao: (id: string) => Promise<void>;
+  clearAllSubmissoes: () => Promise<void>;
+  clearAllSupervisores: () => Promise<void>;
+  clearAllData: () => Promise<void>;
+  loadDemoData: () => Promise<void>;
+  resetToInitialData: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-const STORAGE_KEYS = {
-  SUPERVISORES: 'ms_sumbe_supervisores_v4',
-  SUBMISSOES: 'ms_sumbe_submissoes_v4',
-  SESSION: 'ms_sumbe_session_v4',
-  SCREEN: 'ms_sumbe_screen_v4',
-};
-
+// Default fallback admin access code
 export const ADMIN_CODE = 'ADM2026';
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [supervisores, setSupervisores] = useState<Supervisor[]>(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEYS.SUPERVISORES);
-      if (stored) return JSON.parse(stored);
-    } catch {
-      // ignore
-    }
-    return INITIAL_SUPERVISORES;
-  });
-
-  const [submissoes, setSubmissoes] = useState<Submissao[]>(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEYS.SUBMISSOES);
-      if (stored) return JSON.parse(stored);
-    } catch {
-      // ignore
-    }
-    return INITIAL_SUBMISSOES;
-  });
-
+  // Pure Firestore-driven state: Never default to demo data unless explicit!
+  const [supervisores, setSupervisores] = useState<Supervisor[]>([]);
+  const [submissoes, setSubmissoes] = useState<Submissao[]>([]);
+  const [adminCode, setAdminCode] = useState<string>(ADMIN_CODE);
+  const [isLoadingData, setIsLoadingData] = useState<boolean>(true);
   const [isFirebaseConnected, setIsFirebaseConnected] = useState<boolean>(false);
 
+  // Session state only (for maintaining login on page refresh)
   const [userSession, setUserSession] = useState<UserSession | null>(() => {
     try {
-      const stored = localStorage.getItem(STORAGE_KEYS.SESSION);
+      const stored = sessionStorage.getItem('ms_sumbe_session');
       if (stored) return JSON.parse(stored);
     } catch {
       // ignore
     }
-    const defaultSup = INITIAL_SUPERVISORES[0];
-    return {
-      tipo: 'supervisor',
-      nome: defaultSup.nome,
-      codigo: defaultSup.codigo,
-      supervisor: defaultSup,
-    };
+    return null;
   });
 
-  const [activeScreen, setActiveScreen] = useState<'formulario' | 'dashboard' | 'historico'>(() => {
+  const [activeScreen, setActiveScreen] = useState<'formulario' | 'dashboard' | 'historico'>('formulario');
+
+  // Clean up any legacy localStorage data to comply with user instructions
+  useEffect(() => {
     try {
-      const stored = localStorage.getItem(STORAGE_KEYS.SCREEN);
-      if (stored === 'formulario' || stored === 'dashboard' || stored === 'historico') {
-        return stored;
+      localStorage.removeItem('ms_sumbe_supervisores_v4');
+      localStorage.removeItem('ms_sumbe_submissoes_v4');
+      localStorage.removeItem('ms_sumbe_supervisores');
+      localStorage.removeItem('ms_sumbe_submissoes');
+      localStorage.removeItem('ms_sumbe_session_v4');
+      localStorage.removeItem('ms_sumbe_screen_v4');
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Save session in sessionStorage only
+  useEffect(() => {
+    try {
+      if (userSession) {
+        sessionStorage.setItem('ms_sumbe_session', JSON.stringify(userSession));
+      } else {
+        sessionStorage.removeItem('ms_sumbe_session');
       }
     } catch {
       // ignore
     }
-    return 'formulario';
-  });
+  }, [userSession]);
 
-  // Test Firebase connection & initialize real-time Firestore listeners
+  // Firestore Initialization & Realtime Listeners
   useEffect(() => {
     let unsubscribeSupervisores: (() => void) | undefined;
     let unsubscribeSubmissoes: (() => void) | undefined;
+    let unsubscribeConfig: (() => void) | undefined;
 
     const initFirebase = async () => {
       try {
         const connected = await testConnection();
         setIsFirebaseConnected(connected);
 
-        // Check and seed initial 9 supervisors in Firestore if empty
-        const supSnapshot = await getDocs(collection(db, 'supervisores'));
-        if (supSnapshot.empty) {
-          for (const sup of INITIAL_SUPERVISORES) {
-            await setDoc(doc(db, 'supervisores', sup.id), sup);
+        // Check if system config already exists
+        const configDocRef = doc(db, 'config', 'app_state');
+        const configSnap = await getDoc(configDocRef);
+
+        if (!configSnap.exists()) {
+          // Initialize system config with default admin code
+          await setDoc(configDocRef, {
+            adminCode: ADMIN_CODE,
+            seedInitialized: true,
+            hasClearedDemoData: false,
+            createdAt: new Date().toISOString(),
+          });
+        } else {
+          // Config exists: Load dynamic admin code from Firestore
+          const configData = configSnap.data();
+          if (configData?.adminCode) {
+            setAdminCode(configData.adminCode);
           }
         }
 
-        // Check and seed initial submissions if empty
-        const subSnapshot = await getDocs(collection(db, 'submissoes'));
-        if (subSnapshot.empty) {
-          for (const sub of INITIAL_SUBMISSOES) {
-            await setDoc(doc(db, 'submissoes', sub.id), sub);
-          }
-        }
+        // Attach Realtime Listener for System Config (e.g. admin code changes)
+        unsubscribeConfig = onSnapshot(
+          configDocRef,
+          (docSnap) => {
+            if (docSnap.exists()) {
+              const data = docSnap.data();
+              if (data?.adminCode) {
+                setAdminCode(data.adminCode);
+              }
+            }
+          },
+          (err) => handleFirestoreError(err, OperationType.GET, 'config/app_state')
+        );
 
         // Attach Real-time listener for Supervisores
         unsubscribeSupervisores = onSnapshot(
           collection(db, 'supervisores'),
           (snapshot) => {
-            if (!snapshot.empty) {
-              const loaded: Supervisor[] = [];
-              snapshot.forEach((docSnap) => {
-                loaded.push(docSnap.data() as Supervisor);
-              });
-              setSupervisores(loaded);
-            }
+            const loaded: Supervisor[] = [];
+            snapshot.forEach((docSnap) => {
+              loaded.push(docSnap.data() as Supervisor);
+            });
+            // ALWAYS update state directly from Firestore snapshot (even if 0 items!)
+            setSupervisores(loaded);
+            setIsLoadingData(false);
           },
           (error) => {
             handleFirestoreError(error, OperationType.LIST, 'supervisores');
+            setIsLoadingData(false);
           }
         );
 
@@ -141,24 +161,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         unsubscribeSubmissoes = onSnapshot(
           collection(db, 'submissoes'),
           (snapshot) => {
-            if (!snapshot.empty) {
-              const loaded: Submissao[] = [];
-              snapshot.forEach((docSnap) => {
-                loaded.push(docSnap.data() as Submissao);
-              });
-              // Sort by dataEnvio descending
-              loaded.sort(
-                (a, b) => new Date(b.dataEnvio).getTime() - new Date(a.dataEnvio).getTime()
-              );
-              setSubmissoes(loaded);
-            }
+            const loaded: Submissao[] = [];
+            snapshot.forEach((docSnap) => {
+              loaded.push(docSnap.data() as Submissao);
+            });
+            // Sort by dataEnvio descending
+            loaded.sort(
+              (a, b) => new Date(b.dataEnvio).getTime() - new Date(a.dataEnvio).getTime()
+            );
+            // ALWAYS update state directly from Firestore snapshot (even if 0 items!)
+            setSubmissoes(loaded);
           },
           (error) => {
             handleFirestoreError(error, OperationType.LIST, 'submissoes');
           }
         );
       } catch (err) {
-        console.warn('Iniciando em modo local persistente:', err);
+        console.warn('Erro ao ligar ao Firebase:', err);
+        setIsLoadingData(false);
       }
     };
 
@@ -167,60 +187,58 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => {
       if (unsubscribeSupervisores) unsubscribeSupervisores();
       if (unsubscribeSubmissoes) unsubscribeSubmissoes();
+      if (unsubscribeConfig) unsubscribeConfig();
     };
   }, []);
 
-  // Sync to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.SUPERVISORES, JSON.stringify(supervisores));
-    } catch {
-      // ignore
+  // Update Administrator Access Code in Firestore
+  const updateAdminCode = async (newCode: string): Promise<{ success: boolean; message?: string }> => {
+    const trimmed = newCode.trim();
+    if (!trimmed || trimmed.length < 4) {
+      return { success: false, message: 'O código deve ter pelo menos 4 caracteres.' };
     }
-  }, [supervisores]);
 
-  useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEYS.SUBMISSOES, JSON.stringify(submissoes));
-    } catch {
-      // ignore
-    }
-  }, [submissoes]);
+      const configDocRef = doc(db, 'config', 'app_state');
+      await setDoc(
+        configDocRef,
+        {
+          adminCode: trimmed,
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
 
-  useEffect(() => {
-    try {
-      if (userSession) {
-        localStorage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(userSession));
-      } else {
-        localStorage.removeItem(STORAGE_KEYS.SESSION);
+      setAdminCode(trimmed);
+
+      // If admin is currently logged in, update session code as well
+      if (userSession?.tipo === 'admin') {
+        setUserSession((prev) => (prev ? { ...prev, codigo: trimmed } : null));
       }
-    } catch {
-      // ignore
-    }
-  }, [userSession]);
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.SCREEN, activeScreen);
-    } catch {
-      // ignore
+      return { success: true };
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, 'config/app_state');
+      return { success: false, message: 'Erro ao salvar novo código no Firebase.' };
     }
-  }, [activeScreen]);
+  };
 
   const login = (codigoInput: string, senhaInput?: string): { success: boolean; message?: string } => {
     const trimmedCode = codigoInput.trim();
     const trimmedPass = (senhaInput || '').trim();
 
-    // Admin Access: Code is ADM2026 or password is ADM2026
+    const currentAdminCode = adminCode || ADMIN_CODE;
+
+    // Admin Access: Check against dynamic adminCode from Firebase
     if (
-      trimmedCode.toUpperCase() === ADMIN_CODE ||
-      trimmedPass.toUpperCase() === ADMIN_CODE ||
-      (trimmedCode.toLowerCase() === 'admin' && trimmedPass.toUpperCase() === ADMIN_CODE)
+      trimmedCode.toUpperCase() === currentAdminCode.toUpperCase() ||
+      trimmedPass.toUpperCase() === currentAdminCode.toUpperCase() ||
+      (trimmedCode.toLowerCase() === 'admin' && trimmedPass.toUpperCase() === currentAdminCode.toUpperCase())
     ) {
       const adminSession: UserSession = {
         tipo: 'admin',
         nome: 'Coordenação Geral / Administrador',
-        codigo: ADMIN_CODE,
+        codigo: currentAdminCode,
       };
       setUserSession(adminSession);
       setActiveScreen('dashboard');
@@ -237,7 +255,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!foundSup) {
       return {
         success: false,
-        message: 'Código de utilizador não encontrado. Introduza o código fornecido pelo administrador ou use ADM2026 para o painel.',
+        message: `Código de utilizador não encontrado. Introduza o código fornecido pelo administrador ou use o código de administração (${currentAdminCode}).`,
       };
     }
 
@@ -281,12 +299,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setUserSession({
       tipo: 'admin',
       nome: 'Coordenação Geral / Administrador',
-      codigo: ADMIN_CODE,
+      codigo: adminCode || ADMIN_CODE,
     });
     setActiveScreen('dashboard');
   };
 
-  const addSupervisor = (data: Omit<Supervisor, 'id' | 'dataCriacao'>): Supervisor => {
+  // Supervisor CRUD with Firestore Persistence
+  const addSupervisor = async (data: Omit<Supervisor, 'id' | 'dataCriacao'>): Promise<Supervisor> => {
     const newId = `sup-${Date.now()}`;
     const newSup: Supervisor = {
       ...data,
@@ -294,13 +313,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       dataCriacao: new Date().toISOString().split('T')[0],
     };
 
+    // Optimistic local update
     setSupervisores((prev) => [newSup, ...prev]);
 
     // Persist to Firestore
     try {
-      setDoc(doc(db, 'supervisores', newId), newSup).catch((e) =>
-        handleFirestoreError(e, OperationType.CREATE, `supervisores/${newId}`)
-      );
+      await setDoc(doc(db, 'supervisores', newId), newSup);
     } catch (e) {
       handleFirestoreError(e, OperationType.CREATE, `supervisores/${newId}`);
     }
@@ -308,16 +326,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return newSup;
   };
 
-  const updateSupervisor = (id: string, data: Partial<Supervisor>) => {
+  const updateSupervisor = async (id: string, data: Partial<Supervisor>): Promise<void> => {
     setSupervisores((prev) =>
       prev.map((s) => (s.id === id ? { ...s, ...data } : s))
     );
 
-    // Persist to Firestore
     try {
-      updateDoc(doc(db, 'supervisores', id), data).catch((e) =>
-        handleFirestoreError(e, OperationType.UPDATE, `supervisores/${id}`)
-      );
+      await updateDoc(doc(db, 'supervisores', id), data);
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, `supervisores/${id}`);
     }
@@ -336,14 +351,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const deleteSupervisor = (id: string) => {
+  const deleteSupervisor = async (id: string): Promise<void> => {
+    // Delete immediately from local state
     setSupervisores((prev) => prev.filter((s) => s.id !== id));
 
-    // Persist to Firestore
+    // Permanently delete from Firestore
     try {
-      deleteDoc(doc(db, 'supervisores', id)).catch((e) =>
-        handleFirestoreError(e, OperationType.DELETE, `supervisores/${id}`)
-      );
+      await deleteDoc(doc(db, 'supervisores', id));
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, `supervisores/${id}`);
     }
@@ -353,7 +367,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const addSubmissao = (subData: Omit<Submissao, 'id' | 'dataEnvio'>): Submissao => {
+  // Submissao CRUD with Firestore Persistence
+  const addSubmissao = async (subData: Omit<Submissao, 'id' | 'dataEnvio'>): Promise<Submissao> => {
     const newId = `sub-${Date.now()}`;
     const newSub: Submissao = {
       ...subData,
@@ -363,11 +378,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setSubmissoes((prev) => [newSub, ...prev]);
 
-    // Persist to Firestore
     try {
-      setDoc(doc(db, 'submissoes', newId), newSub).catch((e) =>
-        handleFirestoreError(e, OperationType.CREATE, `submissoes/${newId}`)
-      );
+      await setDoc(doc(db, 'submissoes', newId), newSub);
     } catch (e) {
       handleFirestoreError(e, OperationType.CREATE, `submissoes/${newId}`);
     }
@@ -375,58 +387,115 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return newSub;
   };
 
-  const updateSubmissaoStatus = (id: string, status: 'Validado' | 'Pendente' | 'Em Revisão') => {
+  const updateSubmissaoStatus = async (
+    id: string,
+    status: 'Validado' | 'Pendente' | 'Em Revisão'
+  ): Promise<void> => {
     setSubmissoes((prev) =>
       prev.map((s) => (s.id === id ? { ...s, status } : s))
     );
 
-    // Persist to Firestore
     try {
-      updateDoc(doc(db, 'submissoes', id), { status }).catch((e) =>
-        handleFirestoreError(e, OperationType.UPDATE, `submissoes/${id}`)
-      );
+      await updateDoc(doc(db, 'submissoes', id), { status });
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, `submissoes/${id}`);
     }
   };
 
-  const deleteSubmissao = (id: string) => {
+  const deleteSubmissao = async (id: string): Promise<void> => {
     setSubmissoes((prev) => prev.filter((s) => s.id !== id));
 
-    // Persist to Firestore
     try {
-      deleteDoc(doc(db, 'submissoes', id)).catch((e) =>
-        handleFirestoreError(e, OperationType.DELETE, `submissoes/${id}`)
-      );
+      await deleteDoc(doc(db, 'submissoes', id));
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, `submissoes/${id}`);
     }
   };
 
-  const resetToInitialData = async () => {
-    setSupervisores(INITIAL_SUPERVISORES);
-    setSubmissoes(INITIAL_SUBMISSOES);
-
-    // Reseed Firestore
+  // CLEAR ALL SUBMISSIONS (TOTAL AUTHORITY)
+  const clearAllSubmissoes = async (): Promise<void> => {
+    setSubmissoes([]);
     try {
+      const snap = await getDocs(collection(db, 'submissoes'));
+      const batch = writeBatch(db);
+      snap.forEach((d) => batch.delete(d.ref));
+      batch.set(
+        doc(db, 'config', 'app_state'),
+        { hasClearedDemoData: true, submissoesClearedAt: new Date().toISOString() },
+        { merge: true }
+      );
+      await batch.commit();
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, 'submissoes');
+    }
+  };
+
+  // CLEAR ALL SUPERVISORS (TOTAL AUTHORITY)
+  const clearAllSupervisores = async (): Promise<void> => {
+    setSupervisores([]);
+    try {
+      const snap = await getDocs(collection(db, 'supervisores'));
+      const batch = writeBatch(db);
+      snap.forEach((d) => batch.delete(d.ref));
+      batch.set(
+        doc(db, 'config', 'app_state'),
+        { hasClearedDemoData: true, supervisoresClearedAt: new Date().toISOString() },
+        { merge: true }
+      );
+      await batch.commit();
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, 'supervisores');
+    }
+  };
+
+  // CLEAR ALL DATA (SUBMISSIONS + SUPERVISORS - ZERAR SISTEMA)
+  const clearAllData = async (): Promise<void> => {
+    setSubmissoes([]);
+    setSupervisores([]);
+    try {
+      const [snapSub, snapSup] = await Promise.all([
+        getDocs(collection(db, 'submissoes')),
+        getDocs(collection(db, 'supervisores')),
+      ]);
+      const batch = writeBatch(db);
+      snapSub.forEach((d) => batch.delete(d.ref));
+      snapSup.forEach((d) => batch.delete(d.ref));
+      batch.set(
+        doc(db, 'config', 'app_state'),
+        { hasClearedDemoData: true, allClearedAt: new Date().toISOString() },
+        { merge: true }
+      );
+      await batch.commit();
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, 'all');
+    }
+  };
+
+  // Explicitly Load Demo Data (only when user clicks button)
+  const loadDemoData = async (): Promise<void> => {
+    try {
+      const batch = writeBatch(db);
       for (const sup of INITIAL_SUPERVISORES) {
-        await setDoc(doc(db, 'supervisores', sup.id), sup);
+        batch.set(doc(db, 'supervisores', sup.id), sup);
       }
       for (const sub of INITIAL_SUBMISSOES) {
-        await setDoc(doc(db, 'submissoes', sub.id), sub);
+        batch.set(doc(db, 'submissoes', sub.id), sub);
       }
-    } catch {
-      // ignore
+      batch.set(
+        doc(db, 'config', 'app_state'),
+        { hasClearedDemoData: false, demoLoadedAt: new Date().toISOString() },
+        { merge: true }
+      );
+      await batch.commit();
+      setSupervisores(INITIAL_SUPERVISORES);
+      setSubmissoes(INITIAL_SUBMISSOES);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, 'demo_data');
     }
+  };
 
-    const defaultSup = INITIAL_SUPERVISORES[0];
-    setUserSession({
-      tipo: 'supervisor',
-      nome: defaultSup.nome,
-      codigo: defaultSup.codigo,
-      supervisor: defaultSup,
-    });
-    setActiveScreen('formulario');
+  const resetToInitialData = async (): Promise<void> => {
+    await loadDemoData();
   };
 
   return (
@@ -435,19 +504,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         supervisores,
         submissoes,
         userSession,
+        adminCode,
         activeScreen,
         isFirebaseConnected,
+        isLoadingData,
         setActiveScreen,
         login,
         logout,
         quickLoginAsSupervisor,
         quickLoginAsAdmin,
+        updateAdminCode,
         addSupervisor,
         updateSupervisor,
         deleteSupervisor,
         addSubmissao,
         updateSubmissaoStatus,
         deleteSubmissao,
+        clearAllSubmissoes,
+        clearAllSupervisores,
+        clearAllData,
+        loadDemoData,
         resetToInitialData,
       }}
     >

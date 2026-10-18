@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --primary-color: #e35205;
-  --primary-hover: #c54504;
+  --primary-color: #2667ff;
+  --primary-hover: #1a53db;
   --bg-color: #f4f7f6;
   --white: #ffffff;
   --text-color: #333333;
@@ -61,7 +61,7 @@ body {
   background: var(--primary-color);
   border-color: var(--primary-color);
   color: white;
-  box-shadow: 0 0 12px rgba(227, 82, 5, 0.4);
+  box-shadow: 0 0 12px rgba(38, 103, 255, 0.4);
 }
 
 /* Ficha counter */
@@ -75,7 +75,7 @@ body {
   border-radius: 50px;
   font-size: 13px;
   font-weight: bold;
-  box-shadow: 0 4px 14px rgba(227, 82, 5, 0.35);
+  box-shadow: 0 4px 14px rgba(38, 103, 255, 0.35);
   z-index: 1000;
   display: flex;
   align-items: center;
@@ -185,7 +185,7 @@ body {
   cursor: pointer;
   margin-bottom: 18px;
   user-select: none;
-  background: #fff8f5;
+  background: #eff4ff;
   padding: 10px 14px;
   border-radius: 6px;
   border-left: 4px solid var(--primary-color);
@@ -223,6 +223,7 @@ input[type="text"],
 input[type="date"],
 input[type="number"],
 input[type="tel"],
+input[type="password"],
 select,
 textarea {
   width: 100%;
@@ -241,7 +242,7 @@ select:focus,
 textarea:focus {
   outline: none;
   border-color: var(--primary-color);
-  box-shadow: 0 0 0 3px rgba(227, 82, 5, 0.15);
+  box-shadow: 0 0 0 3px rgba(38, 103, 255, 0.15);
 }
 
 /* Campos bloqueados (Readonly) */
@@ -255,10 +256,10 @@ input[readonly] {
 
 /* Activities section */
 .activities-section {
-  background-color: #fffaf7;
+  background-color: #f8faff;
   padding: 24px 20px;
   border-radius: 10px;
-  border: 1px solid #fed7aa;
+  border: 1px solid #bfdbfe;
 }
 
 .activities-grid {
@@ -280,10 +281,10 @@ input[readonly] {
   background-color: #ffffff;
   padding: 30px 20px 20px 20px;
   border-radius: 8px;
-  border: 1px solid #fed7aa;
+  border: 1px solid #bfdbfe;
   margin-bottom: 25px;
   position: relative;
-  box-shadow: 0 2px 8px rgba(227, 82, 5, 0.05);
+  box-shadow: 0 2px 8px rgba(38, 103, 255, 0.05);
 }
 
 .ficha-header {
@@ -296,15 +297,15 @@ input[readonly] {
   font-weight: 700;
   padding: 4px 16px;
   border-radius: 20px;
-  box-shadow: 0 2px 6px rgba(227, 82, 5, 0.3);
+  box-shadow: 0 2px 6px rgba(38, 103, 255, 0.3);
   letter-spacing: 0.5px;
 }
 
 input[name="total_sim[]"] {
-  background-color: #fff3ed !important;
+  background-color: #eff6ff !important;
   font-weight: 700 !important;
   color: var(--primary-color) !important;
-  border-color: #fbcfe8;
+  border-color: #bfdbfe;
   cursor: not-allowed;
 }
 
@@ -382,12 +383,12 @@ input[name="total_sim[]"] {
 .btn-primary {
   background-color: var(--primary-color);
   color: var(--white);
-  box-shadow: 0 4px 12px rgba(227, 82, 5, 0.25);
+  box-shadow: 0 4px 12px rgba(38, 103, 255, 0.25);
 }
 
 .btn-primary:hover {
   background-color: var(--primary-hover);
-  box-shadow: 0 6px 16px rgba(227, 82, 5, 0.35);
+  box-shadow: 0 6px 16px rgba(38, 103, 255, 0.35);
 }
 
 /* Badges */
@@ -412,7 +413,7 @@ input[name="total_sim[]"] {
 }
 
 .badge-info {
-  background: #e0f2fe;
-  color: #0369a1;
-  border: 1px solid #bae6fd;
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
 }

@@ -43,14 +43,14 @@ import {
 } from 'lucide-react';
 
 const COLORS_9_SUPERVISORES = [
-  '#e35205', // Terracotta Sumbe
+  '#2667ff', // Sumbe Electric Blue (Nova cor primária)
   '#0284c7', // Sky Blue
   '#16a34a', // Emerald Green
   '#d97706', // Amber Gold
   '#9333ea', // Royal Purple
   '#db2777', // Rose Pink
   '#0d9488', // Teal Cyan
-  '#ea580c', // Dark Orange
+  '#6366f1', // Indigo Blue
   '#4f46e5', // Deep Indigo
 ];
 
@@ -58,14 +58,19 @@ export const AdminView: React.FC = () => {
   const {
     supervisores,
     submissoes,
+    adminCode,
+    updateAdminCode,
     addSupervisor,
     updateSupervisor,
     deleteSupervisor,
     updateSubmissaoStatus,
     deleteSubmissao,
+    clearAllSubmissoes,
+    clearAllSupervisores,
+    clearAllData,
+    loadDemoData,
     setActiveScreen,
     quickLoginAsSupervisor,
-    resetToInitialData,
     isFirebaseConnected,
   } = useApp();
 
@@ -80,6 +85,12 @@ export const AdminView: React.FC = () => {
   const [newSupMunicipio, setNewSupMunicipio] = useState('Sumbe');
   const [newSupComuna, setNewSupComuna] = useState('Sede');
   const [newSupCoordenacao, setNewSupCoordenacao] = useState('');
+
+  // Admin Code Update State
+  const [newAdminCodeInput, setNewAdminCodeInput] = useState('');
+  const [adminCodeSuccessMsg, setAdminCodeSuccessMsg] = useState('');
+  const [adminCodeErrorMsg, setAdminCodeErrorMsg] = useState('');
+  const [isUpdatingCode, setIsUpdatingCode] = useState(false);
 
   // Submission Detail Modal
   const [selectedSubmission, setSelectedSubmission] = useState<Submissao | null>(null);
@@ -228,7 +239,7 @@ export const AdminView: React.FC = () => {
   // Recharts Pie Chart Data: Percentagens por Comuna
   const comunaPieData = useMemo(() => {
     const colors: Record<string, string> = {
-      Sede: '#e35205',
+      Sede: '#2667ff',
       Gungo: '#0284c7',
       Gangula: '#16a34a',
       Amboiva: '#9333ea',
@@ -275,7 +286,7 @@ export const AdminView: React.FC = () => {
     });
   }, [submissoes, filterSupervisor, filterComuna, searchTerm]);
 
-  const handleCreateSupervisor = (e: React.FormEvent) => {
+  const handleCreateSupervisor = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newSupNome.trim()) {
       alert('Por favor insira o nome do supervisor.');
@@ -285,7 +296,7 @@ export const AdminView: React.FC = () => {
     const code =
       newSupCodigo.trim() || `SUP-00${supervisores.length + 1}`;
 
-    const created = addSupervisor({
+    const created = await addSupervisor({
       codigo: code,
       nome: newSupNome.trim(),
       telefone: newSupTelefone.trim() || '+244 923 000 000',
@@ -306,6 +317,27 @@ export const AdminView: React.FC = () => {
     alert(
       `Supervisor "${created.nome}" gravado com sucesso no Firebase!\nCódigo de Acesso: ${created.codigo}\nComuna Base: ${created.comuna}\nCoordenação: ${created.coordenacao}`
     );
+  };
+
+  const handleUpdateAdminCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAdminCodeSuccessMsg('');
+    setAdminCodeErrorMsg('');
+    if (!newAdminCodeInput.trim() || newAdminCodeInput.trim().length < 4) {
+      setAdminCodeErrorMsg('O novo código de acesso deve ter pelo menos 4 caracteres.');
+      return;
+    }
+
+    setIsUpdatingCode(true);
+    const res = await updateAdminCode(newAdminCodeInput.trim());
+    setIsUpdatingCode(false);
+
+    if (res.success) {
+      setAdminCodeSuccessMsg(`Código de acesso do administrador alterado com sucesso para "${newAdminCodeInput.trim()}" no Firebase!`);
+      setNewAdminCodeInput('');
+    } else {
+      setAdminCodeErrorMsg(res.message || 'Erro ao alterar código no Firebase.');
+    }
   };
 
   const handleTestAsSupervisor = (sup: Supervisor) => {
@@ -338,8 +370,8 @@ export const AdminView: React.FC = () => {
       <aside className="w-full md:w-64 bg-[#1e293b] text-white flex flex-col shrink-0 border-r border-slate-700">
         <div className="p-4 border-b border-slate-700/80 flex items-center justify-between">
           <div>
-            <div className="text-lg font-black text-orange-500 tracking-tight flex items-center gap-2">
-              <Building className="w-5 h-5 text-orange-500" />
+            <div className="text-lg font-black text-[#2667ff] tracking-tight flex items-center gap-2">
+              <Building className="w-5 h-5 text-[#2667ff]" />
               <span>MS-Sumbe Admin</span>
             </div>
             <div className="text-[11px] text-slate-400 mt-0.5">Gestão de Mobilização Social</div>
@@ -350,7 +382,7 @@ export const AdminView: React.FC = () => {
         <div className="px-3 pt-3 pb-1">
           <button
             onClick={() => setActiveScreen('formulario')}
-            className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-2 shadow-xs transition"
+            className="w-full bg-[#2667ff] hover:bg-[#1a53db] text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
             title="Abrir o formulário de preenchimento de fichas"
           >
             <Plus className="w-3.5 h-3.5" />
@@ -361,9 +393,9 @@ export const AdminView: React.FC = () => {
         <nav className="p-3 space-y-1 flex-1 overflow-y-auto">
           <button
             onClick={() => setActiveTab('dashboard')}
-            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition ${
+            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition cursor-pointer ${
               activeTab === 'dashboard'
-                ? 'bg-slate-800 text-white border-l-4 border-l-orange-500'
+                ? 'bg-slate-800 text-white border-l-4 border-l-[#2667ff]'
                 : 'text-slate-300 hover:bg-slate-800 hover:text-white'
             }`}
           >
@@ -373,26 +405,26 @@ export const AdminView: React.FC = () => {
 
           <button
             onClick={() => setActiveTab('supervisores')}
-            className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition ${
+            className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition cursor-pointer ${
               activeTab === 'supervisores'
-                ? 'bg-slate-800 text-white border-l-4 border-l-orange-500'
+                ? 'bg-slate-800 text-white border-l-4 border-l-[#2667ff]'
                 : 'text-slate-300 hover:bg-slate-800 hover:text-white'
             }`}
           >
             <div className="flex items-center gap-3">
               <Users className="w-4 h-4" />
-              <span>9 Supervisores</span>
+              <span>Supervisores Cadastrados</span>
             </div>
-            <span className="text-xs bg-slate-900 text-orange-400 px-2 py-0.5 rounded-full font-bold">
+            <span className="text-xs bg-slate-900 text-[#2667ff] px-2 py-0.5 rounded-full font-bold">
               {supervisores.length}
             </span>
           </button>
 
           <button
             onClick={() => setActiveTab('relatorios')}
-            className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition ${
+            className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition cursor-pointer ${
               activeTab === 'relatorios'
-                ? 'bg-slate-800 text-white border-l-4 border-l-orange-500'
+                ? 'bg-slate-800 text-white border-l-4 border-l-[#2667ff]'
                 : 'text-slate-300 hover:bg-slate-800 hover:text-white'
             }`}
           >
@@ -407,9 +439,9 @@ export const AdminView: React.FC = () => {
 
           <button
             onClick={() => setActiveTab('configuracoes')}
-            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition ${
+            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition cursor-pointer ${
               activeTab === 'configuracoes'
-                ? 'bg-slate-800 text-white border-l-4 border-l-orange-500'
+                ? 'bg-slate-800 text-white border-l-4 border-l-[#2667ff]'
                 : 'text-slate-300 hover:bg-slate-800 hover:text-white'
             }`}
           >
@@ -425,7 +457,7 @@ export const AdminView: React.FC = () => {
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
             <span>Firebase Firestore Ativo</span>
           </div>
-          <div className="text-[10px] text-slate-400 font-mono">Admin: {ADMIN_CODE}</div>
+          <div className="text-[10px] text-slate-400 font-mono">Admin: {adminCode}</div>
         </div>
       </aside>
 
@@ -436,9 +468,9 @@ export const AdminView: React.FC = () => {
           <div>
             <h2 className="text-lg font-bold text-slate-800 leading-tight">
               {activeTab === 'dashboard' && 'Visão Geral & Gráficos de Mobilização'}
-              {activeTab === 'supervisores' && 'Os 9 Supervisores Cadastrados & Códigos de Acesso'}
+              {activeTab === 'supervisores' && 'Supervisores Cadastrados & Códigos de Acesso'}
               {activeTab === 'relatorios' && 'Fichas e Relatórios Recebidos no Firebase'}
-              {activeTab === 'configuracoes' && 'Definições da Base de Dados Firebase & Acesso'}
+              {activeTab === 'configuracoes' && 'Definições da Base de Dados Firebase & Código de Acesso'}
             </h2>
             <p className="text-[11px] text-slate-500">
               Município do Sumbe, Província do Cuanza-Sul &bull; Sincronização em tempo real
@@ -454,7 +486,7 @@ export const AdminView: React.FC = () => {
 
             <button
               onClick={() => setActiveScreen('formulario')}
-              className="bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 shadow-xs transition"
+              className="bg-[#2667ff] hover:bg-[#1a53db] text-white font-bold text-xs px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 shadow-xs transition cursor-pointer"
               title="Abrir o formulário de preenchimento de fichas"
             >
               <Plus className="w-3.5 h-3.5" />
@@ -463,9 +495,9 @@ export const AdminView: React.FC = () => {
 
             <div className="text-right hidden sm:block pl-2 border-l border-slate-200 text-xs">
               <div className="font-bold text-slate-700">Coordenação Municipal</div>
-              <div className="text-[10px] text-emerald-600 font-medium font-mono">Código: {ADMIN_CODE}</div>
+              <div className="text-[10px] text-emerald-600 font-medium font-mono">Código: {adminCode}</div>
             </div>
-            <div className="w-8 h-8 rounded-full bg-orange-600 text-white font-bold flex items-center justify-center text-xs shadow-xs">
+            <div className="w-8 h-8 rounded-full bg-[#2667ff] text-white font-bold flex items-center justify-center text-xs shadow-xs">
               AD
             </div>
           </div>
@@ -479,7 +511,7 @@ export const AdminView: React.FC = () => {
             <div className="space-y-6">
               {/* CARTÕES DE ESTATÍSTICAS (KPIs) */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs border-l-4 border-l-orange-500">
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs border-l-4 border-l-[#2667ff]">
                   <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
                     Total Pessoas Alcançadas
                   </div>
@@ -536,11 +568,11 @@ export const AdminView: React.FC = () => {
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
                   <div>
                     <h3 className="font-bold text-slate-800 text-base flex items-center gap-2">
-                      <PieIcon className="w-5 h-5 text-orange-600" />
-                      <span>Gráficos de Pizza com Percentagens dos 9 Supervisores</span>
+                      <PieIcon className="w-5 h-5 text-[#2667ff]" />
+                      <span>Gráficos de Pizza com Percentagens dos Supervisores</span>
                     </h3>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Distribuição percentual exata da mobilização entre os 9 coordenadores do Sumbe
+                      Distribuição percentual exata da mobilização entre os coordenadores do Sumbe
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -549,9 +581,9 @@ export const AdminView: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => setSupervisorPieMetric('atividades')}
-                        className={`px-2.5 py-1 rounded-md font-semibold transition ${
+                        className={`px-2.5 py-1 rounded-md font-semibold transition cursor-pointer ${
                           supervisorPieMetric === 'atividades'
-                            ? 'bg-orange-600 text-white shadow-xs'
+                            ? 'bg-[#2667ff] text-white shadow-xs'
                             : 'text-slate-600 hover:text-slate-900'
                         }`}
                       >
@@ -560,17 +592,17 @@ export const AdminView: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => setSupervisorPieMetric('pessoas')}
-                        className={`px-2.5 py-1 rounded-md font-semibold transition ${
+                        className={`px-2.5 py-1 rounded-md font-semibold transition cursor-pointer ${
                           supervisorPieMetric === 'pessoas'
-                            ? 'bg-orange-600 text-white shadow-xs'
+                            ? 'bg-[#2667ff] text-white shadow-xs'
                             : 'text-slate-600 hover:text-slate-900'
                         }`}
                       >
                         % Pessoas Alcançadas
                       </button>
                     </div>
-                    <span className="text-xs bg-orange-100 text-orange-800 font-bold px-2.5 py-1 rounded-full whitespace-nowrap">
-                      9 Supervisores
+                    <span className="text-xs bg-[#eff4ff] text-[#1a53db] font-bold px-2.5 py-1 rounded-full whitespace-nowrap">
+                      {supervisores.length} Supervisores
                     </span>
                   </div>
                 </div>
@@ -768,12 +800,12 @@ export const AdminView: React.FC = () => {
                   </div>
                 </div>
 
-                {/* QUADRO ANALÍTICO DE PERCENTAGENS DOS 9 SUPERVISORES */}
+                {/* QUADRO ANALÍTICO DE PERCENTAGENS DOS SUPERVISORES */}
                 <div className="pt-4 border-t border-slate-100">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
                     <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-orange-600"></span>
-                      <span>Quadro de Percentagens & Desempenho dos 9 Coordenadores</span>
+                      <span className="w-2 h-2 rounded-full bg-[#2667ff]"></span>
+                      <span>Quadro de Percentagens & Desempenho dos Coordenadores</span>
                     </h4>
                     <span className="text-[11px] text-slate-500">
                       Calculado com base em {stats.totalFichas} fichas e {stats.totalSim.toLocaleString('pt-PT')} pessoas no Firebase
@@ -795,63 +827,71 @@ export const AdminView: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 bg-white">
-                        {supervisorPieData.map((sup, idx) => (
-                          <tr key={sup.codigo} className="hover:bg-slate-50 transition">
-                            <td className="py-2 px-3 font-mono font-bold text-slate-400">
-                              #{idx + 1}
-                            </td>
-                            <td className="py-2 px-3 font-semibold text-slate-900 flex items-center gap-2">
-                              <span
-                                className="w-2.5 h-2.5 rounded-full shrink-0"
-                                style={{ backgroundColor: sup.color }}
-                              ></span>
-                              <span>{sup.name}</span>
-                            </td>
-                            <td className="py-2 px-3 font-mono text-orange-700 font-bold">
-                              {sup.codigo}
-                            </td>
-                            <td className="py-2 px-3 text-slate-600">
-                              {sup.comuna}
-                            </td>
-                            <td className="py-2 px-3 font-bold text-slate-800">
-                              {sup.atividades}
-                            </td>
-                            <td className="py-2 px-3 font-bold text-emerald-700">
-                              {sup.pessoas.toLocaleString('pt-PT')}
-                            </td>
-                            <td className="py-2 px-3">
-                              <div className="flex items-center gap-2">
-                                <div className="flex-1 bg-slate-100 rounded-full h-2 overflow-hidden">
-                                  <div
-                                    className="h-full rounded-full transition-all duration-500"
-                                    style={{
-                                      width: `${Math.min(100, sup.percentNum)}%`,
-                                      backgroundColor: sup.color,
-                                    }}
-                                  ></div>
-                                </div>
-                                <span className="font-mono font-bold text-slate-800 w-12 text-right">
-                                  {sup.percentStr}
-                                </span>
-                              </div>
-                            </td>
-                            <td className="py-2 px-3 text-right">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const targetSup = supervisores.find((s) => s.codigo === sup.codigo);
-                                  if (targetSup) {
-                                    setFilterSupervisor(targetSup.id);
-                                    setActiveTab('relatorios');
-                                  }
-                                }}
-                                className="text-orange-600 hover:text-orange-800 font-semibold inline-flex items-center gap-1 hover:underline text-[11px]"
-                              >
-                                Ver Fichas
-                              </button>
+                        {supervisorPieData.length === 0 ? (
+                          <tr>
+                            <td colSpan={8} className="py-6 text-center text-slate-400">
+                              Nenhum supervisor cadastrado. Clique em "+ Cadastrar Novo Supervisor" para adicionar.
                             </td>
                           </tr>
-                        ))}
+                        ) : (
+                          supervisorPieData.map((sup, idx) => (
+                            <tr key={sup.codigo} className="hover:bg-slate-50 transition">
+                              <td className="py-2 px-3 font-mono font-bold text-slate-400">
+                                #{idx + 1}
+                              </td>
+                              <td className="py-2 px-3 font-semibold text-slate-900 flex items-center gap-2">
+                                <span
+                                  className="w-2.5 h-2.5 rounded-full shrink-0"
+                                  style={{ backgroundColor: sup.color }}
+                                ></span>
+                                <span>{sup.name}</span>
+                              </td>
+                              <td className="py-2 px-3 font-mono text-[#2667ff] font-bold">
+                                {sup.codigo}
+                              </td>
+                              <td className="py-2 px-3 text-slate-600">
+                                {sup.comuna}
+                              </td>
+                              <td className="py-2 px-3 font-bold text-slate-800">
+                                {sup.atividades}
+                              </td>
+                              <td className="py-2 px-3 font-bold text-emerald-700">
+                                {sup.pessoas.toLocaleString('pt-PT')}
+                              </td>
+                              <td className="py-2 px-3">
+                                <div className="flex items-center gap-2">
+                                  <div className="flex-1 bg-slate-100 rounded-full h-2 overflow-hidden">
+                                    <div
+                                      className="h-full rounded-full transition-all duration-500"
+                                      style={{
+                                        width: `${Math.min(100, sup.percentNum)}%`,
+                                        backgroundColor: sup.color,
+                                      }}
+                                    ></div>
+                                  </div>
+                                  <span className="font-mono font-bold text-slate-800 w-12 text-right">
+                                    {sup.percentStr}
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="py-2 px-3 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const targetSup = supervisores.find((s) => s.codigo === sup.codigo);
+                                    if (targetSup) {
+                                      setFilterSupervisor(targetSup.id);
+                                      setActiveTab('relatorios');
+                                    }
+                                  }}
+                                  className="text-[#2667ff] hover:text-[#1a53db] font-semibold inline-flex items-center gap-1 hover:underline text-[11px] cursor-pointer"
+                                >
+                                  Ver Fichas
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -865,11 +905,11 @@ export const AdminView: React.FC = () => {
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4 pb-2 border-b border-slate-100">
                   <div>
                     <h3 className="font-bold text-slate-800 text-base flex items-center gap-2">
-                      <BarChart3 className="w-5 h-5 text-orange-600" />
+                      <BarChart3 className="w-5 h-5 text-[#2667ff]" />
                       <span>Volume de Atividades e Locais por Supervisor</span>
                     </h3>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Comparativo de volume das coletas efetuadas por cada um dos 9 supervisores
+                      Comparativo de volume das coletas efetuadas por cada supervisor no Sumbe
                     </p>
                   </div>
                   <div className="text-xs text-slate-500 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded">
@@ -918,7 +958,7 @@ export const AdminView: React.FC = () => {
                       <Bar
                         dataKey="atividades"
                         name="Atividades / Fichas Realizadas"
-                        fill="#e35205"
+                        fill="#2667ff"
                         radius={[4, 4, 0, 0]}
                         maxBarSize={45}
                       />
@@ -944,13 +984,13 @@ export const AdminView: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => setActiveScreen('formulario')}
-                      className="text-xs bg-orange-600 hover:bg-orange-700 text-white font-semibold px-3 py-1.5 rounded-lg transition"
+                      className="text-xs bg-[#2667ff] hover:bg-[#1a53db] text-white font-semibold px-3 py-1.5 rounded-lg transition cursor-pointer"
                     >
                       + Preencher Ficha
                     </button>
                     <button
                       onClick={() => setActiveTab('relatorios')}
-                      className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold px-3 py-1.5 rounded-lg transition"
+                      className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold px-3 py-1.5 rounded-lg transition cursor-pointer"
                     >
                       Ver Todas ({submissoes.length})
                     </button>
@@ -988,7 +1028,7 @@ export const AdminView: React.FC = () => {
                             <td className="py-3 px-4 text-slate-600 text-xs max-w-[200px] truncate" title={bairrosText}>
                               {bairrosText}
                             </td>
-                            <td className="py-3 px-4 font-bold text-orange-600">
+                            <td className="py-3 px-4 font-bold text-[#2667ff]">
                               {sub.totalPessoas.toLocaleString('pt-PT')}
                             </td>
                             <td className="py-3 px-4">
@@ -1007,7 +1047,7 @@ export const AdminView: React.FC = () => {
                             <td className="py-3 px-4 text-right">
                               <button
                                 onClick={() => setSelectedSubmission(sub)}
-                                className="text-xs text-orange-600 hover:text-orange-800 font-semibold inline-flex items-center gap-1"
+                                className="text-xs text-[#2667ff] hover:text-[#1a53db] font-semibold inline-flex items-center gap-1 cursor-pointer"
                               >
                                 <Eye className="w-3.5 h-3.5" />
                                 <span>Ver Detalhes</span>
@@ -1039,7 +1079,7 @@ export const AdminView: React.FC = () => {
                 </div>
                 <button
                   onClick={() => setShowAddSupervisorModal(true)}
-                  className="bg-orange-600 hover:bg-orange-700 text-white font-semibold px-4 py-2.5 rounded-lg text-sm flex items-center justify-center gap-2 shadow-xs transition"
+                  className="bg-[#2667ff] hover:bg-[#1a53db] text-white font-semibold px-4 py-2.5 rounded-lg text-sm flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
                 >
                   <Plus className="w-4 h-4" />
                   <span>Cadastrar Novo Supervisor</span>
@@ -1056,7 +1096,7 @@ export const AdminView: React.FC = () => {
                   return (
                     <div
                       key={sup.id}
-                      className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden flex flex-col justify-between hover:border-orange-300 transition"
+                      className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden flex flex-col justify-between hover:border-[#2667ff] transition"
                     >
                       <div className="p-5">
                         <div className="flex items-start justify-between mb-3">
@@ -1070,7 +1110,7 @@ export const AdminView: React.FC = () => {
                             <div>
                               <h4 className="font-bold text-slate-900 text-base">{sup.nome}</h4>
                               <div className="text-xs text-slate-500">
-                                Comuna: <strong className="text-orange-700">{sup.comuna}</strong>
+                                Comuna: <strong className="text-[#2667ff]">{sup.comuna}</strong>
                               </div>
                             </div>
                           </div>
@@ -1089,7 +1129,7 @@ export const AdminView: React.FC = () => {
                             <span className="text-slate-400 text-[10px] uppercase font-bold block">
                               Código de Acesso
                             </span>
-                            <span className="font-bold text-orange-400 text-sm">
+                            <span className="font-bold text-[#2667ff] text-sm">
                               {sup.codigo}
                             </span>
                           </div>
@@ -1100,7 +1140,7 @@ export const AdminView: React.FC = () => {
 
                         <div className="space-y-1.5 text-xs text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-100">
                           <div className="flex items-center gap-2">
-                            <Compass className="w-3.5 h-3.5 text-orange-600 shrink-0" />
+                            <Compass className="w-3.5 h-3.5 text-[#2667ff] shrink-0" />
                             <span>
                               <strong>Coordenação:</strong> {sup.coordenacao || 'Coordenação Geral'}
                             </span>
@@ -1119,9 +1159,9 @@ export const AdminView: React.FC = () => {
 
                         {/* Estatísticas do supervisor */}
                         <div className="grid grid-cols-2 gap-2 mt-3 text-center">
-                          <div className="bg-orange-50/70 p-2 rounded border border-orange-100">
+                          <div className="bg-[#eff4ff] p-2 rounded border border-[#bfdbfe]">
                             <div className="text-[11px] text-slate-500 font-medium">Fichas Enviadas</div>
-                            <div className="text-base font-bold text-orange-800">
+                            <div className="text-base font-bold text-[#1a53db]">
                               {supSubmissions.length}
                             </div>
                           </div>
@@ -1138,10 +1178,10 @@ export const AdminView: React.FC = () => {
                       <div className="p-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-2">
                         <button
                           onClick={() => handleTestAsSupervisor(sup)}
-                          className="flex-1 bg-white hover:bg-orange-50 hover:text-orange-700 text-slate-700 border border-slate-200 py-1.5 px-2 rounded text-xs font-semibold flex items-center justify-center gap-1.5 transition"
+                          className="flex-1 bg-white hover:bg-[#eff4ff] hover:text-[#1a53db] text-slate-700 border border-slate-200 py-1.5 px-2 rounded text-xs font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer"
                           title="Entrar com a conta deste supervisor para ver o formulário dele"
                         >
-                          <UserCheck className="w-3.5 h-3.5 text-orange-600" />
+                          <UserCheck className="w-3.5 h-3.5 text-[#2667ff]" />
                           <span>Entrar como {sup.nome.split(' ')[0]}</span>
                         </button>
 
@@ -1183,7 +1223,7 @@ export const AdminView: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => setActiveScreen('formulario')}
-                      className="bg-orange-600 hover:bg-orange-700 text-white font-semibold px-3 py-2 rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition"
+                      className="bg-[#2667ff] hover:bg-[#1a53db] text-white font-semibold px-3 py-2 rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
                     >
                       <Plus className="w-4 h-4" />
                       <span>Preencher Ficha</span>
@@ -1307,7 +1347,7 @@ export const AdminView: React.FC = () => {
                               <td className="py-3 px-4 text-xs font-semibold text-slate-800">
                                 {sub.fichas.length}
                               </td>
-                              <td className="py-3 px-4 font-bold text-orange-600">
+                              <td className="py-3 px-4 font-bold text-[#2667ff]">
                                 {sub.totalSim.toLocaleString('pt-PT')}
                               </td>
                               <td className="py-3 px-4 text-xs text-slate-500">
@@ -1338,7 +1378,7 @@ export const AdminView: React.FC = () => {
                               <td className="py-3 px-4 text-right space-x-2">
                                 <button
                                   onClick={() => setSelectedSubmission(sub)}
-                                  className="text-xs bg-orange-50 hover:bg-orange-100 text-orange-700 font-semibold px-2.5 py-1.5 rounded transition inline-flex items-center gap-1"
+                                  className="text-xs bg-[#eff4ff] hover:bg-[#dbeafe] text-[#1a53db] font-semibold px-2.5 py-1.5 rounded transition inline-flex items-center gap-1 cursor-pointer"
                                 >
                                   <Eye className="w-3.5 h-3.5" />
                                   <span>Ver Detalhes</span>
@@ -1369,87 +1409,227 @@ export const AdminView: React.FC = () => {
           {/* ============================================================== */}
           {/* TAB 4: CONFIGURAÇÕES & SEGURANÇA */}
           {/* ============================================================== */}
+          {/* ============================================================== */}
+          {/* TAB 4: CONFIGURAÇÕES, CÓDIGO DE ACESSO & BASE DE DADOS */}
+          {/* ============================================================== */}
           {activeTab === 'configuracoes' && (
-            <div className="space-y-6 max-w-3xl">
-              {/* Código Master do Administrador */}
-              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs space-y-4">
+            <div className="space-y-6 max-w-4xl">
+              {/* 1. ALTERAÇÃO DO CÓDIGO DE ACESSO DO ADMINISTRADOR */}
+              <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-xs space-y-5">
                 <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-orange-100 text-orange-600 flex items-center justify-center font-bold">
-                    <KeyRound className="w-4 h-4" />
+                  <div className="w-10 h-10 rounded-xl bg-[#eff4ff] text-[#2667ff] flex items-center justify-center font-bold">
+                    <KeyRound className="w-5 h-5" />
                   </div>
                   <div>
-                    <h3 className="text-base font-bold text-slate-800">
-                      Código de Acesso do Administrador
+                    <h3 className="text-base font-bold text-slate-900">
+                      Alterar Código de Acesso do Administrador
                     </h3>
                     <p className="text-xs text-slate-500">
-                      Chave para aceder a este painel administrativo
+                      Modifique o código de acesso para entrar neste painel. Gravado e sincronizado diretamente no Firebase Firestore.
                     </p>
                   </div>
                 </div>
 
-                <div className="bg-slate-900 text-white p-4 rounded-xl flex items-center justify-between">
+                {/* Exibição do Código Atual */}
+                <div className="bg-slate-900 text-white p-4 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
-                    <div className="text-xs text-slate-400 font-sans">Código do Administrador:</div>
-                    <div className="text-2xl font-mono font-black text-orange-400 tracking-wider">
-                      {ADMIN_CODE}
+                    <div className="text-xs text-slate-400 font-sans">Código Ativo no Firebase:</div>
+                    <div className="text-2xl font-mono font-black text-[#2667ff] tracking-wider mt-0.5">
+                      {adminCode}
                     </div>
                   </div>
-                  <div className="text-right text-xs text-slate-400 max-w-xs">
-                    Permite aceder ao painel, cadastrar novos supervisores, atribuir coordenações e visualizar relatórios consolidados.
+                  <div className="text-xs text-slate-300 max-w-sm">
+                    Este código é utilizado no ecrã de acesso inicial para autenticar a Coordenação Geral e aceder a todas as opções.
                   </div>
+                </div>
+
+                {/* Formulário para Alterar o Código */}
+                <form onSubmit={handleUpdateAdminCode} className="space-y-3 pt-2">
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Novo Código de Acesso do Administrador
+                  </label>
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <input
+                      type="text"
+                      placeholder="Ex: NOVOCODIGO2026"
+                      value={newAdminCodeInput}
+                      onChange={(e) => {
+                        setNewAdminCodeInput(e.target.value);
+                        setAdminCodeSuccessMsg('');
+                        setAdminCodeErrorMsg('');
+                      }}
+                      className="flex-1 py-2.5 px-3 text-sm font-mono uppercase font-bold border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#2667ff] focus:border-[#2667ff] outline-none"
+                    />
+                    <button
+                      type="submit"
+                      disabled={isUpdatingCode || !newAdminCodeInput.trim()}
+                      className="bg-[#2667ff] hover:bg-[#1a53db] disabled:opacity-50 text-white font-bold text-xs sm:text-sm py-2.5 px-5 rounded-lg flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
+                    >
+                      <KeyRound className="w-4 h-4" />
+                      <span>{isUpdatingCode ? 'A Gravar no Firebase...' : 'Guardar Novo Código'}</span>
+                    </button>
+                  </div>
+
+                  {adminCodeSuccessMsg && (
+                    <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-lg flex items-center gap-2">
+                      <CloudCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>{adminCodeSuccessMsg}</span>
+                    </div>
+                  )}
+
+                  {adminCodeErrorMsg && (
+                    <div className="p-3 bg-red-50 border border-red-200 text-red-800 text-xs rounded-lg">
+                      {adminCodeErrorMsg}
+                    </div>
+                  )}
+                </form>
+              </div>
+
+              {/* 2. AUTORIDADE TOTAL SOBRE OS DADOS (ELIMINAÇÃO NO FIREBASE) */}
+              <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-xs space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-red-50 text-red-600 flex items-center justify-center font-bold">
+                    <Trash2 className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900">
+                      Autoridade Total sobre os Dados (Firebase Firestore)
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      O administrador tem total autoridade para eliminar ficheiros e registos. Uma vez apagados, os dados de demonstração <strong>NÃO voltam a aparecer</strong>.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="bg-amber-50/80 border border-amber-200 p-3.5 rounded-xl text-xs text-amber-900 space-y-1">
+                  <div className="font-bold flex items-center gap-1.5">
+                    <span>Aviso de Autoridade de Dados:</span>
+                  </div>
+                  <p>
+                    As alterações e exclusões são executadas permanentemente na base de dados Firebase. Quando criar novos supervisores ou preencher novas fichas, esses novos dados ficarão guardados e serão os únicos do sistema.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+                  <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl flex flex-col justify-between">
+                    <div>
+                      <h4 className="font-bold text-slate-800 text-xs uppercase">Fichas / Relatórios</h4>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        Atualmente {submissoes.length} ficha(s) gravadas no Firebase.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (window.confirm('Tem a certeza que deseja ELIMINAR TODAS as fichas/relatórios da base de dados Firebase? Os dados apagados não voltam a aparecer.')) {
+                          await clearAllSubmissoes();
+                          alert('Todas as fichas foram permanentemente eliminadas do Firebase.');
+                        }
+                      }}
+                      className="mt-3 w-full py-2 px-3 bg-white hover:bg-red-50 text-red-700 border border-red-200 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Eliminar Todas as Fichas</span>
+                    </button>
+                  </div>
+
+                  <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl flex flex-col justify-between">
+                    <div>
+                      <h4 className="font-bold text-slate-800 text-xs uppercase">Supervisores</h4>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        Atualmente {supervisores.length} supervisor(es) cadastrado(s) no Firebase.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (window.confirm('Tem a certeza que deseja ELIMINAR TODOS os supervisores da base de dados Firebase? Os dados apagados não voltam a aparecer.')) {
+                          await clearAllSupervisores();
+                          alert('Todos os supervisores foram permanentemente eliminados do Firebase.');
+                        }
+                      }}
+                      className="mt-3 w-full py-2 px-3 bg-white hover:bg-red-50 text-red-700 border border-red-200 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Eliminar Supervisores</span>
+                    </button>
+                  </div>
+
+                  <div className="p-4 bg-red-50/60 border border-red-200 rounded-xl flex flex-col justify-between">
+                    <div>
+                      <h4 className="font-bold text-red-900 text-xs uppercase">Zerar Sistema Completo</h4>
+                      <p className="text-[11px] text-red-700 mt-1">
+                        Apaga todas as fichas e supervisores, deixando a base vazia e limpa para registos reais.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (window.confirm('ATENÇÃO: Deseja ZERAR TODO O SISTEMA? Todas as fichas e supervisores serão permanentemente apagados do Firebase e NÃO voltarão a aparecer.')) {
+                          await clearAllData();
+                          alert('O sistema foi completamente zerado no Firebase. Pode agora criar supervisores e submeter dados limpos.');
+                        }
+                      }}
+                      className="mt-3 w-full py-2 px-3 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Zerar Tudo no Firebase</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
+                  <div className="text-xs text-slate-500">
+                    Necessita recarregar dados de exemplo para demonstração?
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (window.confirm('Deseja recarregar os dados de demonstração dos 9 supervisores e fichas no Firebase?')) {
+                        await loadDemoData();
+                        alert('Dados de exemplo carregados no Firebase com sucesso!');
+                      }
+                    }}
+                    className="py-1.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Carregar Dados de Exemplo (Opcional)</span>
+                  </button>
                 </div>
               </div>
 
-              {/* Informações da Estrutura Municipal & Firebase */}
-              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs space-y-3">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+              {/* 3. INFORMAÇÕES DA ESTRUTURA MUNICIPAL & FIREBASE */}
+              <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-xs space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                   <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
-                    <Database className="w-4 h-4 text-orange-600" />
-                    <span>Conexão Firebase Firestore</span>
+                    <Database className="w-5 h-5 text-[#2667ff]" />
+                    <span>Estado da Base de Dados Firebase Firestore</span>
                   </h3>
-                  <span className="text-xs bg-emerald-100 text-emerald-800 font-bold px-2.5 py-0.5 rounded-full">
-                    Sincronizado
+                  <span className="text-xs bg-emerald-100 text-emerald-800 font-bold px-3 py-1 rounded-full flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span>Sincronizado em Tempo Real</span>
                   </span>
                 </div>
-                <div className="grid grid-cols-2 gap-3 text-xs">
-                  <div className="p-3 bg-slate-50 rounded border border-slate-200">
-                    <span className="text-slate-500 block">Projeto Firebase:</span>
-                    <strong className="text-slate-800 text-xs font-mono">gen-lang-client-0240613088</strong>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                    <span className="text-slate-500 block mb-0.5">Projeto Firebase:</span>
+                    <strong className="text-slate-800 font-mono text-xs">gen-lang-client-0240613088</strong>
                   </div>
-                  <div className="p-3 bg-slate-50 rounded border border-slate-200">
-                    <span className="text-slate-500 block">Coleções Ativas:</span>
-                    <strong className="text-slate-800 text-xs font-mono">supervisores, submissoes</strong>
+                  <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                    <span className="text-slate-500 block mb-0.5">Coleções Ativas no Firestore:</span>
+                    <strong className="text-slate-800 font-mono text-xs">/supervisores, /submissoes, /config</strong>
                   </div>
-                  <div className="col-span-2 p-3 bg-slate-50 rounded border border-slate-200">
-                    <span className="text-slate-500 block mb-1">Comunas do Sumbe:</span>
+                  <div className="sm:col-span-2 p-3 bg-slate-50 rounded-lg border border-slate-200">
+                    <span className="text-slate-500 block mb-1">Comunas Ativas no Município do Sumbe:</span>
                     <div className="flex flex-wrap gap-2">
                       {COMUNAS_SUMBE.map((c) => (
-                        <span key={c} className="bg-orange-100 text-orange-900 px-2.5 py-1 rounded font-semibold text-xs">
+                        <span key={c} className="bg-[#eff4ff] text-[#1a53db] border border-[#bfdbfe] px-2.5 py-1 rounded-md font-semibold text-xs">
                           {c}
                         </span>
                       ))}
                     </div>
                   </div>
                 </div>
-              </div>
-
-              {/* Restauração de Dados */}
-              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
-                <div>
-                  <h4 className="text-sm font-bold text-slate-800">Reiniciar Dados do Sistema</h4>
-                  <p className="text-xs text-slate-500">Recarrega os 9 supervisores e fichas originais no Firebase.</p>
-                </div>
-                <button
-                  onClick={() => {
-                    if (window.confirm('Tem a certeza que deseja restaurar os dados originais dos 9 supervisores?')) {
-                      resetToInitialData();
-                    }
-                  }}
-                  className="px-4 py-2 bg-slate-100 hover:bg-red-50 text-slate-700 hover:text-red-700 border border-slate-200 rounded-lg text-xs font-bold flex items-center gap-2 transition"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Restaurar 9 Supervisores</span>
-                </button>
               </div>
             </div>
           )}
@@ -1486,7 +1666,7 @@ export const AdminView: React.FC = () => {
             <form onSubmit={handleCreateSupervisor} className="space-y-3.5">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Nome Completo do Supervisor <span className="text-orange-600">*</span>
+                  Nome Completo do Supervisor <span className="text-[#2667ff]">*</span>
                 </label>
                 <input
                   type="text"
@@ -1501,7 +1681,7 @@ export const AdminView: React.FC = () => {
               {/* CÓDIGO DE ACESSO */}
               <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Código de Acesso do Utilizador <span className="text-orange-600">*</span>
+                  Código de Acesso do Utilizador <span className="text-[#2667ff]">*</span>
                 </label>
                 <input
                   type="text"
@@ -1509,7 +1689,7 @@ export const AdminView: React.FC = () => {
                   placeholder={`SUP-00${supervisores.length + 1}`}
                   value={newSupCodigo}
                   onChange={(e) => setNewSupCodigo(e.target.value)}
-                  className="w-full text-sm font-mono font-bold text-orange-800 bg-white"
+                  className="w-full text-sm font-mono font-bold text-[#1a53db] bg-white"
                 />
                 <span className="text-[11px] text-slate-400 mt-1 block">
                   O supervisor utilizará apenas este código para aceder ao sistema.
@@ -1530,12 +1710,12 @@ export const AdminView: React.FC = () => {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Comuna Atribuída <span className="text-orange-600">*</span>
+                    Comuna Atribuída <span className="text-[#2667ff]">*</span>
                   </label>
                   <select
                     value={newSupComuna}
                     onChange={(e) => setNewSupComuna(e.target.value)}
-                    className="w-full text-sm font-bold text-orange-900 border-orange-300 bg-orange-50/50"
+                    className="w-full text-sm font-bold text-slate-800 border-slate-300 bg-white"
                   >
                     {COMUNAS_SUMBE.map((c) => (
                       <option key={c} value={c}>
@@ -1549,7 +1729,7 @@ export const AdminView: React.FC = () => {
               {/* COORDENAÇÃO */}
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Coordenação de Atuação <span className="text-orange-600">*</span>
+                  Coordenação de Atuação <span className="text-[#2667ff]">*</span>
                 </label>
                 <input
                   type="text"
@@ -1581,13 +1761,13 @@ export const AdminView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setShowAddSupervisorModal(false)}
-                  className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 text-sm font-semibold hover:bg-slate-50"
+                  className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 text-sm font-semibold hover:bg-slate-50 cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-lg bg-orange-600 hover:bg-orange-700 text-white text-sm font-semibold shadow-xs"
+                  className="px-5 py-2 rounded-lg bg-[#2667ff] hover:bg-[#1a53db] text-white text-sm font-semibold shadow-xs transition cursor-pointer"
                 >
                   Salvar Supervisor no Firebase
                 </button>
@@ -1606,7 +1786,7 @@ export const AdminView: React.FC = () => {
             <div className="flex items-center justify-between border-b border-slate-200 pb-3 mb-4 shrink-0">
               <div>
                 <div className="flex items-center gap-2">
-                  <FileText className="w-5 h-5 text-orange-600" />
+                  <FileText className="w-5 h-5 text-[#2667ff]" />
                   <h3 className="font-bold text-slate-900 text-lg">
                     Ficha de Mobilização &bull; {selectedSubmission.supervisorNome}
                   </h3>
@@ -1617,7 +1797,7 @@ export const AdminView: React.FC = () => {
               </div>
               <button
                 onClick={() => setSelectedSubmission(null)}
-                className="text-slate-400 hover:text-slate-600 text-2xl font-bold leading-none"
+                className="text-slate-400 hover:text-slate-600 text-2xl font-bold leading-none cursor-pointer"
               >
                 &times;
               </button>
@@ -1627,9 +1807,9 @@ export const AdminView: React.FC = () => {
             <div className="overflow-y-auto flex-1 pr-1 space-y-5">
               {/* Resumo Rápido */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="bg-orange-50 p-3 rounded-lg border border-orange-100 text-center">
-                  <div className="text-[11px] font-semibold text-orange-800 uppercase">Total Pessoas (Sim)</div>
-                  <div className="text-xl font-bold text-orange-900">{selectedSubmission.totalSim.toLocaleString('pt-PT')}</div>
+                <div className="bg-[#eff4ff] p-3 rounded-lg border border-[#bfdbfe] text-center">
+                  <div className="text-[11px] font-semibold text-[#1a53db] uppercase">Total Pessoas (Sim)</div>
+                  <div className="text-xl font-bold text-[#1b4fd8]">{selectedSubmission.totalSim.toLocaleString('pt-PT')}</div>
                 </div>
                 <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-center">
                   <div className="text-[11px] font-semibold text-slate-600 uppercase">Total Não</div>
@@ -1655,7 +1835,7 @@ export const AdminView: React.FC = () => {
                   <div key={ficha.id || idx} className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
                     <div className="flex items-center justify-between border-b border-slate-200/80 pb-2">
                       <div className="flex items-center gap-2">
-                        <span className="bg-orange-600 text-white font-bold text-xs px-2.5 py-0.5 rounded-full">
+                        <span className="bg-[#2667ff] text-white font-bold text-xs px-2.5 py-0.5 rounded-full">
                           Ficha {ficha.numeroFicha || idx + 1}
                         </span>
                         <span className="font-bold text-slate-800 text-sm">
@@ -1671,42 +1851,42 @@ export const AdminView: React.FC = () => {
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                       <div className="bg-white p-2 rounded border border-slate-200">
                         <span className="text-slate-500 block">Casa a Casa:</span>
-                        <strong>{ficha.casa_locais}</strong> loc. / <strong className="text-orange-600">{ficha.casa_pessoas}</strong> pess.
+                        <strong>{ficha.casa_locais}</strong> loc. / <strong className="text-[#2667ff]">{ficha.casa_pessoas}</strong> pess.
                       </div>
                       <div className="bg-white p-2 rounded border border-slate-200">
                         <span className="text-slate-500 block">Igrejas:</span>
-                        <strong>{ficha.igrejas_locais}</strong> loc. / <strong className="text-orange-600">{ficha.igrejas_pessoas}</strong> pess.
+                        <strong>{ficha.igrejas_locais}</strong> loc. / <strong className="text-[#2667ff]">{ficha.igrejas_pessoas}</strong> pess.
                       </div>
                       <div className="bg-white p-2 rounded border border-slate-200">
                         <span className="text-slate-500 block">Praças / Mercados:</span>
-                        <strong>{ficha.pracas_locais}</strong> loc. / <strong className="text-orange-600">{ficha.pracas_pessoas}</strong> pess.
+                        <strong>{ficha.pracas_locais}</strong> loc. / <strong className="text-[#2667ff]">{ficha.pracas_pessoas}</strong> pess.
                       </div>
                       <div className="bg-white p-2 rounded border border-slate-200">
                         <span className="text-slate-500 block">Paragens de Táxi:</span>
-                        <strong>{ficha.paragem_locais}</strong> loc. / <strong className="text-orange-600">{ficha.paragem_pessoas}</strong> pess.
+                        <strong>{ficha.paragem_locais}</strong> loc. / <strong className="text-[#2667ff]">{ficha.paragem_pessoas}</strong> pess.
                       </div>
                       <div className="bg-white p-2 rounded border border-slate-200">
                         <span className="text-slate-500 block">Creches:</span>
-                        <strong>{ficha.creches_locais}</strong> loc. / <strong className="text-orange-600">{ficha.creches_pessoas}</strong> pess.
+                        <strong>{ficha.creches_locais}</strong> loc. / <strong className="text-[#2667ff]">{ficha.creches_pessoas}</strong> pess.
                       </div>
                       <div className="bg-white p-2 rounded border border-slate-200">
                         <span className="text-slate-500 block">Escolas:</span>
-                        <strong>{ficha.escolas_locais}</strong> loc. / <strong className="text-orange-600">{ficha.escolas_pessoas}</strong> pess.
+                        <strong>{ficha.escolas_locais}</strong> loc. / <strong className="text-[#2667ff]">{ficha.escolas_pessoas}</strong> pess.
                       </div>
                       <div className="bg-white p-2 rounded border border-slate-200">
                         <span className="text-slate-500 block">Pontos de Água:</span>
-                        <strong>{ficha.agua_locais}</strong> loc. / <strong className="text-orange-600">{ficha.agua_pessoas}</strong> pess.
+                        <strong>{ficha.agua_locais}</strong> loc. / <strong className="text-[#2667ff]">{ficha.agua_pessoas}</strong> pess.
                       </div>
                       <div className="bg-white p-2 rounded border border-slate-200">
                         <span className="text-slate-500 block">Outros:</span>
-                        <strong>{ficha.outros_locais}</strong> loc. / <strong className="text-orange-600">{ficha.outros_pessoas}</strong> pess.
+                        <strong>{ficha.outros_locais}</strong> loc. / <strong className="text-[#2667ff]">{ficha.outros_pessoas}</strong> pess.
                       </div>
                     </div>
 
-                    <div className="flex justify-between items-center bg-orange-100/60 p-2.5 rounded-lg border border-orange-200 text-xs">
+                    <div className="flex justify-between items-center bg-[#eff4ff] p-2.5 rounded-lg border border-[#bfdbfe] text-xs">
                       <div>
-                        <span className="font-bold text-orange-950">Total Sim: </span>
-                        <span className="font-extrabold text-orange-800 text-sm">{ficha.total_sim} pessoas</span>
+                        <span className="font-bold text-slate-800">Total Sim: </span>
+                        <span className="font-extrabold text-[#1a53db] text-sm">{ficha.total_sim} pessoas</span>
                       </div>
                       <div>
                         <span className="font-bold text-slate-700">Total Não: </span>
@@ -1724,7 +1904,7 @@ export const AdminView: React.FC = () => {
               </span>
               <button
                 onClick={() => setSelectedSubmission(null)}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-semibold text-xs rounded-lg"
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-semibold text-xs rounded-lg cursor-pointer"
               >
                 Fechar Detalhes
               </button>

@@ -38,6 +38,16 @@
         "observacoes": { "type": "string" }
       },
       "required": ["id", "supervisorId", "supervisorNome", "data", "totalPessoas", "status"]
+    },
+    "SystemConfig": {
+      "title": "SystemConfig",
+      "description": "Configurações globais do sistema, como código de acesso do administrador e estado de inicialização",
+      "type": "object",
+      "properties": {
+        "adminCode": { "type": "string" },
+        "seedInitialized": { "type": "boolean" },
+        "updatedAt": { "type": "string" }
+      }
     }
   },
   "firestore": {
@@ -48,6 +58,10 @@
     "/submissoes/{submissaoId}": {
       "schema": { "$ref": "#/entities/Submissao" },
       "description": "Relatórios e fichas de campo enviados pelos supervisores"
+    },
+    "/config/{configId}": {
+      "schema": { "$ref": "#/entities/SystemConfig" },
+      "description": "Configurações gerais do sistema e código de administração"
     }
   }
 }

@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { useApp, ADMIN_CODE } from '../context/AppContext';
-import { User, AlertCircle, ArrowRight, Building, KeyRound } from 'lucide-react';
+import { useApp } from '../context/AppContext';
+import { AlertCircle, ArrowRight, Building, KeyRound } from 'lucide-react';
 
 export const LoginScreen: React.FC = () => {
-  const { login } = useApp();
+  const { login, adminCode } = useApp();
   const [codigo, setCodigo] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
 
@@ -27,10 +27,10 @@ export const LoginScreen: React.FC = () => {
       <div className="max-w-md w-full">
         {/* Logótipo e Cabeçalho Institucional */}
         <div className="text-center mb-6">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-orange-600 text-white shadow-md mb-2.5">
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-[#2667ff] text-white shadow-md mb-2.5">
             <Building className="w-7 h-7" />
           </div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-orange-600 tracking-tight">
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-[#2667ff] tracking-tight">
             MS<span className="text-slate-700">-sumbe</span>
           </h1>
           <p className="text-xs sm:text-sm font-bold text-slate-700 uppercase tracking-wider mt-0.5">
@@ -70,25 +70,25 @@ export const LoginScreen: React.FC = () => {
                 </div>
                 <input
                   type="text"
-                  placeholder="Ex: SUP-001 ou ADM2026"
+                  placeholder="Ex: SUP-001 ou código do administrador"
                   value={codigo}
                   onChange={(e) => {
                     setCodigo(e.target.value);
                     setErrorMessage('');
                   }}
-                  className="w-full pl-9 pr-3 py-2.5 text-sm font-medium border border-slate-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none"
+                  className="w-full pl-9 pr-3 py-2.5 text-sm font-medium border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#2667ff] focus:border-[#2667ff] outline-none"
                   autoFocus
                 />
               </div>
               <div className="flex justify-between items-center text-[11px] text-slate-400 mt-1.5 px-0.5">
                 <span>Supervisor: use o seu código</span>
-                <span>Admin: <strong className="text-slate-600 font-mono">{ADMIN_CODE}</strong></span>
+                <span>Admin: <strong className="text-slate-600 font-mono">{adminCode}</strong></span>
               </div>
             </div>
 
             <button
               type="submit"
-              className="w-full mt-2 py-2.5 px-4 rounded-lg bg-orange-600 hover:bg-orange-700 text-white font-bold text-sm shadow-sm transition flex items-center justify-center gap-2"
+              className="w-full mt-2 py-2.5 px-4 rounded-lg bg-[#2667ff] hover:bg-[#1a53db] text-white font-bold text-sm shadow-sm transition flex items-center justify-center gap-2 cursor-pointer"
             >
               <span>Entrar</span>
               <ArrowRight className="w-4 h-4" />

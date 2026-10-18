@@ -159,7 +159,7 @@ export const SupervisorView: React.FC = () => {
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!activeSupervisor) {
@@ -201,7 +201,7 @@ export const SupervisorView: React.FC = () => {
         Number(f.outros_locais);
     });
 
-    const newSubmissao = addSubmissao({
+    const newSubmissao = await addSubmissao({
       supervisorId: activeSupervisor.id,
       supervisorNome: activeSupervisor.nome,
       provincia: activeSupervisor.provincia || 'Cuanza-Sul',
@@ -298,7 +298,7 @@ export const SupervisorView: React.FC = () => {
                       <select
                         value={selectedAdminSupId}
                         onChange={(e) => setSelectedAdminSupId(e.target.value)}
-                        className="font-bold text-slate-800 bg-orange-50 border-orange-300"
+                        className="font-bold text-slate-800 bg-[#eff4ff] border-[#bfdbfe]"
                         title="Como administrador, selecione o supervisor atribuído à ficha"
                       >
                         {supervisores.map((s) => (
@@ -328,8 +328,8 @@ export const SupervisorView: React.FC = () => {
                   <div className="form-group">
                     <label>Comuna Base de Atuação</label>
                     <div className="flex items-center gap-2 text-sm text-slate-700 bg-white border border-slate-300 rounded px-3 py-2">
-                      <MapPin className="w-4 h-4 text-orange-600 shrink-0" />
-                      <span className="font-semibold text-orange-950">
+                      <MapPin className="w-4 h-4 text-[#2667ff] shrink-0" />
+                      <span className="font-semibold text-blue-950">
                         {activeSupervisor?.comuna || 'Sede'}
                       </span>
                       <span className="text-xs text-slate-400">
@@ -391,7 +391,7 @@ export const SupervisorView: React.FC = () => {
                         {activeSupervisor?.coordenacao && (
                           <div className="mt-1 text-xs text-slate-500">
                             <span>Coordenação: </span>
-                            <span className="text-orange-700 font-medium">
+                            <span className="text-[#1a53db] font-medium">
                               {activeSupervisor.coordenacao}
                             </span>
                           </div>
@@ -692,20 +692,20 @@ export const SupervisorView: React.FC = () => {
               O Administrador Provincial e a Coordenação Municipal do Sumbe já receberam o seu relatório.
             </p>
 
-            <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 mb-6 space-y-2 text-sm">
-              <div className="flex justify-between border-b border-orange-200/60 pb-1.5">
+            <div className="bg-[#eff4ff] border border-[#bfdbfe] rounded-xl p-4 mb-6 space-y-2 text-sm">
+              <div className="flex justify-between border-b border-[#bfdbfe]/60 pb-1.5">
                 <span className="text-slate-600">Supervisor Atribuído:</span>
                 <span className="font-semibold text-slate-900">{activeSupervisor?.nome}</span>
               </div>
-              <div className="flex justify-between border-b border-orange-200/60 pb-1.5">
+              <div className="flex justify-between border-b border-[#bfdbfe]/60 pb-1.5">
                 <span className="text-slate-600">Total de Fichas:</span>
-                <span className="font-semibold text-orange-700">{submittedModalData.totalFichas} ficha(s)</span>
+                <span className="font-semibold text-[#1a53db]">{submittedModalData.totalFichas} ficha(s)</span>
               </div>
-              <div className="flex justify-between border-b border-orange-200/60 pb-1.5">
+              <div className="flex justify-between border-b border-[#bfdbfe]/60 pb-1.5">
                 <span className="text-slate-600">Total Pessoas Alcançadas:</span>
-                <span className="font-bold text-orange-800 text-base">{submittedModalData.totalPessoas.toLocaleString('pt-PT')}</span>
+                <span className="font-bold text-[#1b4fd8] text-base">{submittedModalData.totalPessoas.toLocaleString('pt-PT')}</span>
               </div>
-              <div className="flex justify-between border-b border-orange-200/60 pb-1.5">
+              <div className="flex justify-between border-b border-[#bfdbfe]/60 pb-1.5">
                 <span className="text-slate-600">Locais Visitados:</span>
                 <span className="font-semibold text-slate-900">{submittedModalData.totalLocais}</span>
               </div>
@@ -721,7 +721,7 @@ export const SupervisorView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setSubmittedModalData(null)}
-                className="w-full py-3 px-4 rounded-lg bg-orange-600 hover:bg-orange-700 text-white font-semibold text-sm shadow-md transition"
+                className="w-full py-3 px-4 rounded-lg bg-[#2667ff] hover:bg-[#1a53db] text-white font-semibold text-sm shadow-md transition cursor-pointer"
               >
                 Preencher Nova Coleta
               </button>

@@ -1,0 +1,6 @@
+{
+  "name": "MS-Sumbe - Sistema de Mobilização Social",
+  "description": "Sistema de gestão e coleta de dados da mobilização social do Sumbe (Cuanza-Sul), com portal do supervisor e painel administrativo.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

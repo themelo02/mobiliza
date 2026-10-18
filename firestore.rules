@@ -1,0 +1,16 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /supervisores/{supervisorId} {
+      allow read, write: if true;
+    }
+
+    match /submissoes/{submissaoId} {
+      allow read, write: if true;
+    }
+
+    match /test/connection {
+      allow read, write: if true;
+    }
+  }
+}

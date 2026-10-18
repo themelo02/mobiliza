@@ -1,0 +1,53 @@
+{
+  "entities": {
+    "Supervisor": {
+      "title": "Supervisor",
+      "description": "Supervisor de mobilização social cadastrado para o município do Sumbe",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "codigo": { "type": "string" },
+        "nome": { "type": "string" },
+        "telefone": { "type": "string" },
+        "provincia": { "type": "string" },
+        "municipio": { "type": "string" },
+        "comuna": { "type": "string" },
+        "coordenacao": { "type": "string" },
+        "ativo": { "type": "boolean" },
+        "dataCriacao": { "type": "string" }
+      },
+      "required": ["id", "codigo", "nome", "comuna", "coordenacao", "ativo"]
+    },
+    "Submissao": {
+      "title": "Submissao",
+      "description": "Submissão de fichas de atividade coletadas pelos supervisores no Sumbe",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "supervisorId": { "type": "string" },
+        "supervisorNome": { "type": "string" },
+        "provincia": { "type": "string" },
+        "municipio": { "type": "string" },
+        "data": { "type": "string" },
+        "dataEnvio": { "type": "string" },
+        "totalPessoas": { "type": "number" },
+        "totalLocais": { "type": "number" },
+        "totalSim": { "type": "number" },
+        "totalNao": { "type": "number" },
+        "status": { "type": "string" },
+        "observacoes": { "type": "string" }
+      },
+      "required": ["id", "supervisorId", "supervisorNome", "data", "totalPessoas", "status"]
+    }
+  },
+  "firestore": {
+    "/supervisores/{supervisorId}": {
+      "schema": { "$ref": "#/entities/Supervisor" },
+      "description": "Registo dos supervisores do município do Sumbe"
+    },
+    "/submissoes/{submissaoId}": {
+      "schema": { "$ref": "#/entities/Submissao" },
+      "description": "Relatórios e fichas de campo enviados pelos supervisores"
+    }
+  }
+}

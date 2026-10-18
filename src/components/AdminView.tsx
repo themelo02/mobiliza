@@ -236,24 +236,21 @@ export const AdminView: React.FC = () => {
     };
   }, [submissoes]);
 
-  // Recharts Pie Chart Data: Percentagens por Comuna
+  // Recharts Pie Chart Data: Percentagens por Comuna (Apenas Sede)
   const comunaPieData = useMemo(() => {
     const colors: Record<string, string> = {
       Sede: '#2667ff',
-      Gungo: '#0284c7',
-      Gangula: '#16a34a',
-      Amboiva: '#9333ea',
     };
 
     return COMUNAS_SUMBE.map((c) => {
       const cData = stats.comunaStats[c] || { pessoas: 0, fichas: 0 };
-      const pct = stats.totalFichas > 0 ? (cData.fichas / stats.totalFichas) * 100 : 25;
+      const pct = stats.totalFichas > 0 ? (cData.fichas / stats.totalFichas) * 100 : 100;
       return {
         name: c,
         value: cData.fichas,
         pessoas: cData.pessoas,
         percentStr: `${pct.toFixed(1)}%`,
-        color: colors[c] || '#64748b',
+        color: colors[c] || '#2667ff',
       };
     });
   }, [stats]);
@@ -682,7 +679,7 @@ export const AdminView: React.FC = () => {
                         % Distribuição por Comuna
                       </h4>
                       <p className="text-[11px] text-slate-500 text-center mb-2">
-                        Alcance territorial nas 4 comunas do Sumbe
+                        Comuna Sede do Município do Sumbe
                       </p>
 
                       <div className="h-56 w-full">
@@ -1620,11 +1617,11 @@ export const AdminView: React.FC = () => {
                     <strong className="text-slate-800 font-mono text-xs">/supervisores, /submissoes, /config</strong>
                   </div>
                   <div className="sm:col-span-2 p-3 bg-slate-50 rounded-lg border border-slate-200">
-                    <span className="text-slate-500 block mb-1">Comunas Ativas no Município do Sumbe:</span>
+                    <span className="text-slate-500 block mb-1">Comuna Ativa no Município do Sumbe:</span>
                     <div className="flex flex-wrap gap-2">
                       {COMUNAS_SUMBE.map((c) => (
                         <span key={c} className="bg-[#eff4ff] text-[#1a53db] border border-[#bfdbfe] px-2.5 py-1 rounded-md font-semibold text-xs">
-                          {c}
+                          {c} (Sede do Sumbe)
                         </span>
                       ))}
                     </div>

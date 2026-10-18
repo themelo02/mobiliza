@@ -71,8 +71,5 @@ export interface Submissao {
 }
 
 export const COMUNAS_SUMBE = [
-  'Sede',
-  'Gungo',
-  'Gangula',
-  'Amboiva'
+  'Sede'
 ];

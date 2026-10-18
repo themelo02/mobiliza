@@ -370,7 +370,7 @@ export const SupervisorView: React.FC = () => {
                           name="comuna[]"
                           value={ficha.comuna}
                           onChange={(e) => handleInputChange(index, 'comuna', e.target.value)}
-                          placeholder="Ex: Sede, Gungo, Gangula, Amboiva"
+                          placeholder="Ex: Sede"
                           required
                         />
                       </div>

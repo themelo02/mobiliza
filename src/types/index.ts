@@ -1,3 +1,16 @@
+export interface Coordenacao {
+  id: string;
+  nome: string;
+  descricao?: string;
+  bairros?: string[];
+  municipio: string;
+  comuna: string;
+  supervisorIds: string[]; // 1 a 2 supervisores por coordenação
+  limiteSupervisores: number; // fixo em 2
+  metaFichasTotal?: number;
+  dataCriacao: string;
+}
+
 export interface Supervisor {
   id: string;
   codigo: string;
@@ -6,7 +19,8 @@ export interface Supervisor {
   provincia: string;
   municipio: string;
   comuna: string;
-  coordenacao: string; // Coordenação de atuação
+  coordenacao: string; // Nome da Coordenação de atuação
+  coordenacaoId?: string; // ID da Coordenação vinculada
   totalFichasPrevistas?: number; // Total de fichas atribuídas durante a campanha
   diasTrabalhoPrevistos?: number; // Quantidade de dias de trabalho previstos (ex: 5, 6, 7...)
   ativo: boolean;

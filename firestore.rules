@@ -17,6 +17,10 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    match /coordenacoes/{coordenacaoId} {
+      allow read, write: if true;
+    }
+
     match /test/connection {
       allow read, write: if true;
     }

@@ -48,6 +48,21 @@
         "seedInitialized": { "type": "boolean" },
         "updatedAt": { "type": "string" }
       }
+    },
+    "Coordenacao": {
+      "title": "Coordenacao",
+      "description": "Coordenação de mobilização social no município do Sumbe com 1 a 2 supervisores atribuídos",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "nome": { "type": "string" },
+        "descricao": { "type": "string" },
+        "municipio": { "type": "string" },
+        "comuna": { "type": "string" },
+        "limiteSupervisores": { "type": "number" },
+        "dataCriacao": { "type": "string" }
+      },
+      "required": ["id", "nome", "municipio", "comuna", "limiteSupervisores"]
     }
   },
   "firestore": {
@@ -62,6 +77,10 @@
     "/config/{configId}": {
       "schema": { "$ref": "#/entities/SystemConfig" },
       "description": "Configurações gerais do sistema e código de administração"
+    },
+    "/coordenacoes/{coordenacaoId}": {
+      "schema": { "$ref": "#/entities/Coordenacao" },
+      "description": "Coordenações de campo com 1 a 2 supervisores atribuídos"
     }
   }
 }

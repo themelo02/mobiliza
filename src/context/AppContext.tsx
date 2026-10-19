@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { Supervisor, Submissao, UserSession, UtilizadorLeitura } from '../types';
-import { INITIAL_SUPERVISORES, INITIAL_SUBMISSOES } from '../data/initialData';
+import { Supervisor, Submissao, UserSession, UtilizadorLeitura, Coordenacao } from '../types';
+import { INITIAL_SUPERVISORES, INITIAL_SUBMISSOES, INITIAL_COORDENACOES } from '../data/initialData';
 import { db, testConnection, handleFirestoreError, OperationType } from '../firebase/config';
 import {
   collection,
@@ -18,6 +18,7 @@ interface AppContextType {
   supervisores: Supervisor[];
   submissoes: Submissao[];
   leitores: UtilizadorLeitura[];
+  coordenacoes: Coordenacao[];
   userSession: UserSession | null;
   adminCode: string;
   activeScreen: 'formulario' | 'dashboard' | 'historico';
@@ -32,6 +33,11 @@ interface AppContextType {
   addSupervisor: (data: Omit<Supervisor, 'id' | 'dataCriacao'>) => Promise<Supervisor>;
   updateSupervisor: (id: string, data: Partial<Supervisor>) => Promise<void>;
   deleteSupervisor: (id: string) => Promise<void>;
+  addCoordenacao: (data: Omit<Coordenacao, 'id' | 'dataCriacao'>) => Promise<Coordenacao>;
+  updateCoordenacao: (id: string, data: Partial<Coordenacao>) => Promise<void>;
+  deleteCoordenacao: (id: string) => Promise<void>;
+  assignSupervisorToCoordenacao: (coordenacaoId: string, supervisorId: string) => Promise<{ success: boolean; message?: string }>;
+  removeSupervisorFromCoordenacao: (coordenacaoId: string, supervisorId: string) => Promise<void>;
   addLeitor: (data: Omit<UtilizadorLeitura, 'id' | 'dataCriacao'>) => Promise<UtilizadorLeitura>;
   updateLeitor: (id: string, data: Partial<UtilizadorLeitura>) => Promise<void>;
   toggleLeitorStatus: (id: string) => Promise<void>;
@@ -56,6 +62,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [supervisores, setSupervisores] = useState<Supervisor[]>([]);
   const [submissoes, setSubmissoes] = useState<Submissao[]>([]);
   const [leitores, setLeitores] = useState<UtilizadorLeitura[]>([]);
+  const [coordenacoes, setCoordenacoes] = useState<Coordenacao[]>([]);
   const [adminCode, setAdminCode] = useState<string>(ADMIN_CODE);
   const [isLoadingData, setIsLoadingData] = useState<boolean>(true);
   const [isFirebaseConnected, setIsFirebaseConnected] = useState<boolean>(false);
@@ -106,6 +113,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let unsubscribeSubmissoes: (() => void) | undefined;
     let unsubscribeConfig: (() => void) | undefined;
     let unsubscribeLeitores: (() => void) | undefined;
+    let unsubscribeCoordenacoes: (() => void) | undefined;
 
     const initFirebase = async () => {
       try {
@@ -198,6 +206,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             handleFirestoreError(error, OperationType.LIST, 'leitores');
           }
         );
+
+        // Attach Real-time listener for Coordenacoes (1 a 2 supervisores por coordenação)
+        unsubscribeCoordenacoes = onSnapshot(
+          collection(db, 'coordenacoes'),
+          async (snapshot) => {
+            if (snapshot.empty) {
+              // Se vazio na primeira execução, carrega as coordenações iniciais do Sumbe
+              try {
+                const batch = writeBatch(db);
+                for (const c of INITIAL_COORDENACOES) {
+                  batch.set(doc(db, 'coordenacoes', c.id), c);
+                }
+                await batch.commit();
+              } catch (e) {
+                console.warn('Erro ao inicializar coordenações:', e);
+              }
+              setCoordenacoes(INITIAL_COORDENACOES);
+            } else {
+              const loaded: Coordenacao[] = [];
+              snapshot.forEach((docSnap) => {
+                loaded.push(docSnap.data() as Coordenacao);
+              });
+              setCoordenacoes(loaded);
+            }
+          },
+          (error) => {
+            handleFirestoreError(error, OperationType.LIST, 'coordenacoes');
+          }
+        );
       } catch (err) {
         console.warn('Erro ao ligar ao Firebase:', err);
         setIsLoadingData(false);
@@ -211,6 +248,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (unsubscribeSubmissoes) unsubscribeSubmissoes();
       if (unsubscribeConfig) unsubscribeConfig();
       if (unsubscribeLeitores) unsubscribeLeitores();
+      if (unsubscribeCoordenacoes) unsubscribeCoordenacoes();
     };
   }, []);
 
@@ -466,6 +504,103 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  // Coordenacao CRUD with Firestore Persistence (Cada coordenação tem 1 a 2 supervisores)
+  const addCoordenacao = async (data: Omit<Coordenacao, 'id' | 'dataCriacao'>): Promise<Coordenacao> => {
+    const newId = `coord-${Date.now()}`;
+    const newCoord: Coordenacao = {
+      ...data,
+      id: newId,
+      limiteSupervisores: 2,
+      supervisorIds: (data.supervisorIds || []).slice(0, 2),
+      dataCriacao: new Date().toISOString().split('T')[0],
+    };
+
+    setCoordenacoes((prev) => [newCoord, ...prev]);
+
+    try {
+      await setDoc(doc(db, 'coordenacoes', newId), newCoord);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.CREATE, `coordenacoes/${newId}`);
+    }
+
+    return newCoord;
+  };
+
+  const updateCoordenacao = async (id: string, data: Partial<Coordenacao>): Promise<void> => {
+    setCoordenacoes((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, ...data } : c))
+    );
+
+    try {
+      await updateDoc(doc(db, 'coordenacoes', id), data);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, `coordenacoes/${id}`);
+    }
+  };
+
+  const deleteCoordenacao = async (id: string): Promise<void> => {
+    setCoordenacoes((prev) => prev.filter((c) => c.id !== id));
+
+    try {
+      await deleteDoc(doc(db, 'coordenacoes', id));
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, `coordenacoes/${id}`);
+    }
+  };
+
+  const assignSupervisorToCoordenacao = async (
+    coordenacaoId: string,
+    supervisorId: string
+  ): Promise<{ success: boolean; message?: string }> => {
+    const targetCoord = coordenacoes.find((c) => c.id === coordenacaoId);
+    if (!targetCoord) {
+      return { success: false, message: 'Coordenação não encontrada.' };
+    }
+
+    if (targetCoord.supervisorIds.includes(supervisorId)) {
+      return { success: true, message: 'Supervisor já se encontra atribuído a esta coordenação.' };
+    }
+
+    if (targetCoord.supervisorIds.length >= (targetCoord.limiteSupervisores || 2)) {
+      return {
+        success: false,
+        message: `Esta coordenação já tem a lotação completa de ${targetCoord.limiteSupervisores || 2} supervisores (máximo permitido).`,
+      };
+    }
+
+    const updatedIds = [...targetCoord.supervisorIds, supervisorId];
+    await updateCoordenacao(coordenacaoId, { supervisorIds: updatedIds });
+
+    const sup = supervisores.find((s) => s.id === supervisorId);
+    if (sup) {
+      await updateSupervisor(supervisorId, {
+        coordenacao: targetCoord.nome,
+        coordenacaoId: targetCoord.id,
+      });
+    }
+
+    return { success: true };
+  };
+
+  const removeSupervisorFromCoordenacao = async (
+    coordenacaoId: string,
+    supervisorId: string
+  ): Promise<void> => {
+    const targetCoord = coordenacoes.find((c) => c.id === coordenacaoId);
+    if (!targetCoord) return;
+
+    const updatedIds = targetCoord.supervisorIds.filter((id) => id !== supervisorId);
+    await updateCoordenacao(coordenacaoId, { supervisorIds: updatedIds });
+
+    const sup = supervisores.find((s) => s.id === supervisorId);
+    if (sup && sup.coordenacaoId === coordenacaoId) {
+      await updateSupervisor(supervisorId, {
+        coordenacao: 'Coordenação Geral Sumbe',
+        coordenacaoId: undefined,
+      });
+    }
+  };
+
   // Submissao CRUD with Firestore Persistence
   const addSubmissao = async (subData: Omit<Submissao, 'id' | 'dataEnvio'>): Promise<Submissao> => {
     const newId = `sub-${Date.now()}`;
@@ -603,6 +738,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         supervisores,
         submissoes,
         leitores,
+        coordenacoes,
         userSession,
         adminCode,
         activeScreen,
@@ -617,6 +753,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addSupervisor,
         updateSupervisor,
         deleteSupervisor,
+        addCoordenacao,
+        updateCoordenacao,
+        deleteCoordenacao,
+        assignSupervisorToCoordenacao,
+        removeSupervisorFromCoordenacao,
         addLeitor,
         updateLeitor,
         toggleLeitorStatus,

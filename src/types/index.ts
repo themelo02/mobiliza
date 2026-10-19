@@ -7,16 +7,28 @@ export interface Supervisor {
   municipio: string;
   comuna: string;
   coordenacao: string; // Coordenação de atuação
+  totalFichasPrevistas?: number; // Total de fichas atribuídas durante a campanha
+  diasTrabalhoPrevistos?: number; // Quantidade de dias de trabalho previstos (ex: 5, 6, 7...)
   ativo: boolean;
   dataCriacao: string;
   senha?: string;
 }
 
+export interface UtilizadorLeitura {
+  id: string;
+  codigo: string;
+  nome: string;
+  cargo?: string;
+  ativo: boolean;
+  dataCriacao: string;
+}
+
 export interface UserSession {
-  tipo: 'admin' | 'supervisor';
+  tipo: 'admin' | 'supervisor' | 'leitor';
   nome: string;
   codigo: string;
   supervisor?: Supervisor;
+  leitor?: UtilizadorLeitura;
 }
 
 export interface FichaAtividade {
@@ -24,6 +36,7 @@ export interface FichaAtividade {
   numeroFicha: number;
   comuna: string;
   bairro: string;
+  diaCampanha?: number; // Dia 1, Dia 2, Dia 3... de trabalho
   
   casa_locais: number;
   casa_pessoas: number;
@@ -60,6 +73,7 @@ export interface Submissao {
   provincia: string;
   municipio: string;
   data: string; // YYYY-MM-DD
+  diaCampanha?: number; // Dia de trabalho (ex: 1, 2, 3...)
   dataEnvio: string; // ISO string
   fichas: FichaAtividade[];
   totalPessoas: number;

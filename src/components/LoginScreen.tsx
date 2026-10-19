@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { AlertCircle, ArrowRight, Building, KeyRound } from 'lucide-react';
+import { AlertCircle, ArrowRight, Building, KeyRound, Eye, EyeOff, ShieldCheck, Lock } from 'lucide-react';
 
 export const LoginScreen: React.FC = () => {
-  const { login, adminCode } = useApp();
+  const { login } = useApp();
   const [codigo, setCodigo] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -16,9 +18,12 @@ export const LoginScreen: React.FC = () => {
       return;
     }
 
+    setIsSubmitting(true);
     const result = login(codigo);
+    setIsSubmitting(false);
+
     if (!result.success) {
-      setErrorMessage(result.message || 'Código inválido.');
+      setErrorMessage(result.message || 'Código de acesso inválido.');
     }
   };
 
@@ -41,14 +46,20 @@ export const LoginScreen: React.FC = () => {
           </p>
         </div>
 
-        {/* Cartão de Acesso */}
+        {/* Cartão de Acesso Protegido */}
         <div className="bg-white rounded-2xl shadow-xl border border-slate-200/80 p-6 sm:p-8">
           <div className="mb-5">
-            <h2 className="text-base sm:text-lg font-bold text-slate-800">
-              Acesso ao Sistema
-            </h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-base sm:text-lg font-bold text-slate-800">
+                Acesso Seguro ao Sistema
+              </h2>
+              <div className="flex items-center gap-1 text-[11px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 font-semibold">
+                <Lock className="w-3 h-3 text-emerald-600" />
+                <span>Autenticação</span>
+              </div>
+            </div>
             <p className="text-xs text-slate-500 mt-1">
-              Introduza o código atribuído ao seu utilizador pela administração municipal para aceder.
+              Introduza o código de acesso atribuído à sua função pela administração municipal.
             </p>
           </div>
 
@@ -62,38 +73,55 @@ export const LoginScreen: React.FC = () => {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                Código de Acesso
+                Código de Acesso Confidencial
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
                   <KeyRound className="w-4 h-4" />
                 </div>
                 <input
-                  type="text"
-                  placeholder="Ex: SUP-001 ou código do administrador"
+                  type={showPassword ? 'text' : 'password'}
+                  placeholder="Introduza o seu código..."
                   value={codigo}
                   onChange={(e) => {
                     setCodigo(e.target.value);
                     setErrorMessage('');
                   }}
-                  className="w-full pl-9 pr-3 py-2.5 text-sm font-medium border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#2667ff] focus:border-[#2667ff] outline-none"
+                  className="w-full pl-9 pr-10 py-2.5 text-sm font-medium border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#2667ff] focus:border-[#2667ff] outline-none tracking-wide"
                   autoFocus
+                  autoComplete="off"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
+                  title={showPassword ? 'Ocultar código' : 'Mostrar código'}
+                  tabIndex={-1}
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
-              <div className="flex justify-between items-center text-[11px] text-slate-400 mt-1.5 px-0.5">
-                <span>Supervisor: use o seu código</span>
-                <span>Admin: <strong className="text-slate-600 font-mono">{adminCode}</strong></span>
-              </div>
+              <p className="text-[11px] text-slate-500 mt-1.5 px-0.5 flex items-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5 text-[#2667ff] shrink-0" />
+                <span>Compatível com contas de Administrador, Supervisor e Consulta (Leitura).</span>
+              </p>
             </div>
 
             <button
               type="submit"
-              className="w-full mt-2 py-2.5 px-4 rounded-lg bg-[#2667ff] hover:bg-[#1a53db] text-white font-bold text-sm shadow-sm transition flex items-center justify-center gap-2 cursor-pointer"
+              disabled={isSubmitting}
+              className="w-full mt-2 py-2.5 px-4 rounded-lg bg-[#2667ff] hover:bg-[#1a53db] text-white font-bold text-sm shadow-sm transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
             >
-              <span>Entrar</span>
+              <span>Entrar no Sistema</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </form>
+
+          <div className="mt-5 pt-4 border-t border-slate-100 text-center">
+            <span className="text-[11px] text-slate-400">
+              Caso não possua código de acesso, solicite à Coordenação Municipal de Mobilização Social.
+            </span>
+          </div>
         </div>
 
         {/* Rodapé Institucional */}

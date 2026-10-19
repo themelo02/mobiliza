@@ -1,6 +1,6 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
-import { LayoutDashboard, LogOut, User, ShieldCheck, History } from 'lucide-react';
+import { LayoutDashboard, LogOut, User, ShieldCheck, History, Eye } from 'lucide-react';
 
 export const NavigationHeader: React.FC = () => {
   const { userSession, activeScreen, setActiveScreen, logout } = useApp();
@@ -8,6 +8,8 @@ export const NavigationHeader: React.FC = () => {
   if (!userSession) return null;
 
   const isAdmin = userSession.tipo === 'admin';
+  const isLeitor = userSession.tipo === 'leitor';
+  const isSupervisor = userSession.tipo === 'supervisor';
 
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-xs">
@@ -16,7 +18,7 @@ export const NavigationHeader: React.FC = () => {
         <div className="flex items-center gap-2">
           <div
             className="cursor-pointer flex items-center gap-1.5"
-            onClick={() => setActiveScreen(isAdmin ? 'dashboard' : 'formulario')}
+            onClick={() => setActiveScreen(isAdmin || isLeitor ? 'dashboard' : 'formulario')}
           >
             <span className="text-lg font-black text-[#2667ff] tracking-tight">
               MS<span className="text-slate-700">-sumbe</span>
@@ -45,8 +47,16 @@ export const NavigationHeader: React.FC = () => {
             </button>
           )}
 
+          {/* Se for Utilizador de Leitura, indicador claro de apenas consulta */}
+          {isLeitor && (
+            <div className="hidden sm:flex items-center gap-1.5 bg-blue-50 border border-blue-200 text-[#1a53db] px-2.5 py-1 rounded-full text-[11px] font-semibold">
+              <Eye className="w-3.5 h-3.5 text-[#2667ff]" />
+              <span>Modo Só de Leitura</span>
+            </div>
+          )}
+
           {/* Se for supervisor, botão de histórico das suas fichas */}
-          {!isAdmin && (
+          {isSupervisor && (
             <button
               onClick={() => setActiveScreen(activeScreen === 'historico' ? 'formulario' : 'historico')}
               className={`px-2.5 py-1 rounded text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
@@ -63,17 +73,22 @@ export const NavigationHeader: React.FC = () => {
 
           {/* Identificação compacta do utilizador */}
           <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 py-1 px-2.5 rounded-full text-xs">
-            {isAdmin ? (
-              <ShieldCheck className="w-3.5 h-3.5 text-[#2667ff] shrink-0" />
-            ) : (
-              <User className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-            )}
+            {isAdmin && <ShieldCheck className="w-3.5 h-3.5 text-[#2667ff] shrink-0" />}
+            {isLeitor && <Eye className="w-3.5 h-3.5 text-[#2667ff] shrink-0" />}
+            {isSupervisor && <User className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
+
             <span className="font-bold text-slate-800 text-[11px] max-w-[130px] truncate">
               {userSession.nome}
             </span>
-            {!isAdmin && userSession.supervisor?.comuna && (
+
+            {isSupervisor && userSession.supervisor?.comuna && (
               <span className="text-[10px] text-slate-400 font-medium hidden md:inline">
                 ({userSession.supervisor.comuna})
+              </span>
+            )}
+            {isLeitor && (
+              <span className="text-[10px] bg-blue-100 text-[#1a53db] px-1.5 py-0.2 rounded font-bold">
+                Leitor
               </span>
             )}
           </div>

@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useApp, ADMIN_CODE } from '../context/AppContext';
-import { Supervisor, Submissao, COMUNAS_SUMBE } from '../types';
+import { Supervisor, Submissao, COMUNAS_SUMBE, UtilizadorLeitura } from '../types';
 import {
   BarChart,
   Bar,
@@ -40,6 +40,19 @@ import {
   Compass,
   Database,
   CloudCheck,
+  ThumbsUp,
+  ThumbsDown,
+  CheckCircle,
+  Copy,
+  Shield,
+  Lock,
+  Calendar,
+  CalendarDays,
+  Target,
+  Award,
+  CheckSquare,
+  Clock,
+  Edit3,
 } from 'lucide-react';
 
 const COLORS_9_SUPERVISORES = [
@@ -58,11 +71,17 @@ export const AdminView: React.FC = () => {
   const {
     supervisores,
     submissoes,
+    leitores,
+    userSession,
     adminCode,
     updateAdminCode,
     addSupervisor,
     updateSupervisor,
     deleteSupervisor,
+    addLeitor,
+    updateLeitor,
+    toggleLeitorStatus,
+    deleteLeitor,
     updateSubmissaoStatus,
     deleteSubmissao,
     clearAllSubmissoes,
@@ -74,9 +93,11 @@ export const AdminView: React.FC = () => {
     isFirebaseConnected,
   } = useApp();
 
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'supervisores' | 'relatorios' | 'configuracoes'>('dashboard');
+  const isReadOnly = userSession?.tipo === 'leitor';
 
-  // Supervisor Form State (sem senha, apenas código e coordenação)
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'diario' | 'supervisores' | 'leitores' | 'relatorios' | 'configuracoes'>('dashboard');
+
+  // Supervisor Form State (com metas de fichas e dias de trabalho)
   const [showAddSupervisorModal, setShowAddSupervisorModal] = useState(false);
   const [newSupNome, setNewSupNome] = useState('');
   const [newSupCodigo, setNewSupCodigo] = useState('');
@@ -85,6 +106,28 @@ export const AdminView: React.FC = () => {
   const [newSupMunicipio, setNewSupMunicipio] = useState('Sumbe');
   const [newSupComuna, setNewSupComuna] = useState('Sede');
   const [newSupCoordenacao, setNewSupCoordenacao] = useState('');
+  const [newSupTotalFichas, setNewSupTotalFichas] = useState<number>(25);
+  const [newSupDiasTrabalho, setNewSupDiasTrabalho] = useState<number>(5);
+
+  // Edit Supervisor Target Modal State
+  const [editingSupTarget, setEditingSupTarget] = useState<Supervisor | null>(null);
+  const [editTotalFichas, setEditTotalFichas] = useState<number>(25);
+  const [editDiasTrabalho, setEditDiasTrabalho] = useState<number>(5);
+  const [isSavingTarget, setIsSavingTarget] = useState<boolean>(false);
+
+  // Filter by Day / Date
+  const [filterDia, setFilterDia] = useState<string>('todos');
+
+  // Leitor Form State (Utilizador Só de Leitura)
+  const [showAddLeitorModal, setShowAddLeitorModal] = useState(false);
+  const [newLeitorNome, setNewLeitorNome] = useState('');
+  const [newLeitorCodigo, setNewLeitorCodigo] = useState('');
+  const [newLeitorCargo, setNewLeitorCargo] = useState('');
+  const [leitorSuccessMsg, setLeitorSuccessMsg] = useState('');
+  const [isCreatingLeitor, setIsCreatingLeitor] = useState(false);
+
+  // Acceptance vs Rejection View Mode
+  const [acceptanceViewMode, setAcceptanceViewMode] = useState<'supervisores' | 'bairros'>('supervisores');
 
   // Admin Code Update State
   const [newAdminCodeInput, setNewAdminCodeInput] = useState('');
@@ -267,21 +310,259 @@ export const AdminView: React.FC = () => {
     ];
   }, [stats]);
 
+  // Acceptance vs Rejection Rate Metrics (Taxa de Aceitação e Rejeição)
+  const acceptanceMetrics = useMemo(() => {
+    const totalSim = stats.totalSim;
+    const totalNao = stats.totalNao;
+    const totalRespostas = totalSim + totalNao;
+    const taxaAceitacao = totalRespostas > 0 ? (totalSim / totalRespostas) * 100 : 0;
+    const taxaRejeicao = totalRespostas > 0 ? (totalNao / totalRespostas) * 100 : 0;
+    const margemLiquida = taxaAceitacao - taxaRejeicao;
+    const ratio = totalNao > 0 ? (totalSim / totalNao).toFixed(1) : totalSim > 0 ? '100+' : '0';
+
+    return {
+      totalSim,
+      totalNao,
+      totalRespostas,
+      taxaAceitacao: Number(taxaAceitacao.toFixed(1)),
+      taxaRejeicao: Number(taxaRejeicao.toFixed(1)),
+      margemLiquida: Number(margemLiquida.toFixed(1)),
+      ratio,
+      donutData: [
+        { name: 'Aceitação (Sim)', value: totalSim, percentStr: `${taxaAceitacao.toFixed(1)}%`, color: '#2667ff' },
+        { name: 'Rejeição (Não)', value: totalNao, percentStr: `${taxaRejeicao.toFixed(1)}%`, color: '#ef4444' },
+      ],
+    };
+  }, [stats]);
+
+  // Acceptance vs Rejection by Supervisor
+  const supervisorAcceptanceData = useMemo(() => {
+    return supervisores.map((sup) => {
+      const supSubs = submissoes.filter((s) => s.supervisorId === sup.id);
+      let sim = 0;
+      let nao = 0;
+      supSubs.forEach((s) => {
+        sim += Number(s.totalSim) || 0;
+        nao += Number(s.totalNao) || 0;
+      });
+      const total = sim + nao;
+      const taxaSim = total > 0 ? (sim / total) * 100 : 0;
+      const taxaNao = total > 0 ? (nao / total) * 100 : 0;
+      return {
+        name: sup.nome.split(' ')[0] + ' ' + (sup.nome.split(' ')[1] || ''),
+        nomeCompleto: sup.nome,
+        codigo: sup.codigo,
+        comuna: sup.comuna,
+        sim,
+        nao,
+        total,
+        taxaSim: Number(taxaSim.toFixed(1)),
+        taxaNao: Number(taxaNao.toFixed(1)),
+        taxaSimStr: `${taxaSim.toFixed(1)}%`,
+        taxaNaoStr: `${taxaNao.toFixed(1)}%`,
+      };
+    });
+  }, [supervisores, submissoes]);
+
+  // Acceptance vs Rejection by Bairro
+  const bairroAcceptanceData = useMemo(() => {
+    const bMap: Record<string, { sim: number; nao: number }> = {};
+    submissoes.forEach((sub) => {
+      sub.fichas.forEach((f) => {
+        const b = f.bairro?.trim() || 'Outro';
+        if (!bMap[b]) bMap[b] = { sim: 0, nao: 0 };
+        bMap[b].sim += Number(f.total_sim) || 0;
+        bMap[b].nao += Number(f.total_nao) || 0;
+      });
+    });
+    return Object.entries(bMap)
+      .map(([bairro, d]) => {
+        const total = d.sim + d.nao;
+        const taxaSim = total > 0 ? (d.sim / total) * 100 : 0;
+        const taxaNao = total > 0 ? (d.nao / total) * 100 : 0;
+        return {
+          name: bairro,
+          nomeCompleto: `Bairro ${bairro}`,
+          codigo: 'Sumbe',
+          comuna: 'Sede',
+          sim: d.sim,
+          nao: d.nao,
+          total,
+          taxaSim: Number(taxaSim.toFixed(1)),
+          taxaNao: Number(taxaNao.toFixed(1)),
+          taxaSimStr: `${taxaSim.toFixed(1)}%`,
+          taxaNaoStr: `${taxaNao.toFixed(1)}%`,
+        };
+      })
+      .sort((a, b) => b.total - a.total);
+  }, [submissoes]);
+
+  // Daily Tracking and Analytics (Separação de Fichas por Dia & Cumprimento de Metas)
+  const dailyAnalytics = useMemo(() => {
+    // 1. Extrair todas as datas únicas ordenadas cronologicamente
+    const datesSet = new Set<string>();
+    submissoes.forEach((sub) => {
+      if (sub.data) datesSet.add(sub.data);
+    });
+    // Se não houver submissões, manter datas de exemplo
+    if (datesSet.size === 0) {
+      datesSet.add(new Date().toISOString().split('T')[0]);
+    }
+    const sortedDates = Array.from(datesSet).sort();
+
+    // Mapeamento de data -> "Dia 1", "Dia 2", etc.
+    const dateLabels: Record<string, { diaNum: number; label: string; shortDate: string }> = {};
+    sortedDates.forEach((d, idx) => {
+      const parts = d.split('-');
+      const short = parts.length === 3 ? `${parts[2]}/${parts[1]}` : d;
+      dateLabels[d] = {
+        diaNum: idx + 1,
+        label: `Dia ${idx + 1} (${short})`,
+        shortDate: short,
+      };
+    });
+
+    // 2. Matriz de desempenho por supervisor
+    const supervisorMatrix = supervisores.map((sup) => {
+      const supSubs = submissoes.filter((s) => s.supervisorId === sup.id);
+      const totalPrevisto = sup.totalFichasPrevistas || 25;
+      const diasPrevistos = sup.diasTrabalhoPrevistos || 5;
+      const metaDiaria = Math.ceil(totalPrevisto / (diasPrevistos || 1));
+
+      const fichasPorData: Record<string, number> = {};
+      const pessoasPorData: Record<string, number> = {};
+      let totalFichasLancadas = 0;
+      let totalPessoasLancadas = 0;
+      let diasTrabalhados = 0;
+
+      sortedDates.forEach((d) => {
+        const subsDoDia = supSubs.filter((s) => s.data === d);
+        let fichasNoDia = 0;
+        let pessoasNoDia = 0;
+        subsDoDia.forEach((s) => {
+          fichasNoDia += s.fichas.length;
+          pessoasNoDia += s.totalSim;
+        });
+        fichasPorData[d] = fichasNoDia;
+        pessoasPorData[d] = pessoasNoDia;
+        totalFichasLancadas += fichasNoDia;
+        totalPessoasLancadas += pessoasNoDia;
+        if (fichasNoDia > 0) diasTrabalhados += 1;
+      });
+
+      const percentualCumprido = totalPrevisto > 0 ? (totalFichasLancadas / totalPrevisto) * 100 : 0;
+      const mediaDiaria = diasTrabalhados > 0 ? totalFichasLancadas / diasTrabalhados : 0;
+
+      return {
+        supervisor: sup,
+        totalPrevisto,
+        diasPrevistos,
+        metaDiaria,
+        fichasPorData,
+        pessoasPorData,
+        totalFichasLancadas,
+        totalPessoasLancadas,
+        diasTrabalhados,
+        percentualCumprido: Number(percentualCumprido.toFixed(1)),
+        percentualStr: `${percentualCumprido.toFixed(1)}%`,
+        mediaDiaria: Number(mediaDiaria.toFixed(1)),
+      };
+    });
+
+    // 3. Totais por dia de trabalho
+    const totalsByDate: Record<string, { totalFichas: number; totalPessoas: number; supervisoresAtivos: number }> = {};
+    sortedDates.forEach((d) => {
+      let fCount = 0;
+      let pCount = 0;
+      let activeSupCount = 0;
+      supervisorMatrix.forEach((m) => {
+        const f = m.fichasPorData[d] || 0;
+        const p = m.pessoasPorData[d] || 0;
+        if (f > 0) {
+          fCount += f;
+          pCount += p;
+          activeSupCount += 1;
+        }
+      });
+      totalsByDate[d] = { totalFichas: fCount, totalPessoas: pCount, supervisoresAtivos: activeSupCount };
+    });
+
+    // 4. Chart Data para Recharts
+    const chartData = sortedDates.map((d) => {
+      const info = dateLabels[d];
+      const tot = totalsByDate[d] || { totalFichas: 0, totalPessoas: 0, supervisoresAtivos: 0 };
+      return {
+        date: d,
+        diaLabel: info ? info.label : d,
+        shortDate: info ? info.shortDate : d,
+        fichas: tot.totalFichas,
+        pessoas: tot.totalPessoas,
+        supervisoresAtivos: tot.supervisoresAtivos,
+      };
+    });
+
+    // 5. Total de fichas previstas somando todos os supervisores
+    const totalGeralPrevisto = supervisorMatrix.reduce((acc, m) => acc + m.totalPrevisto, 0);
+    const totalGeralLancado = supervisorMatrix.reduce((acc, m) => acc + m.totalFichasLancadas, 0);
+    const taxaGlobalCumprimento = totalGeralPrevisto > 0 ? (totalGeralLancado / totalGeralPrevisto) * 100 : 0;
+
+    return {
+      sortedDates,
+      dateLabels,
+      supervisorMatrix,
+      totalsByDate,
+      chartData,
+      totalGeralPrevisto,
+      totalGeralLancado,
+      taxaGlobalCumprimento: Number(taxaGlobalCumprimento.toFixed(1)),
+    };
+  }, [supervisores, submissoes]);
+
+  const handleCreateLeitor = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newLeitorNome.trim()) {
+      alert('Por favor insira o nome do utilizador de leitura.');
+      return;
+    }
+    const code = newLeitorCodigo.trim() || `LEITOR-00${leitores.length + 1}`;
+    setIsCreatingLeitor(true);
+    try {
+      await addLeitor({
+        codigo: code.toUpperCase(),
+        nome: newLeitorNome.trim(),
+        cargo: newLeitorCargo.trim() || 'Consulta & Estatística',
+        ativo: true,
+      });
+      setNewLeitorNome('');
+      setNewLeitorCodigo('');
+      setNewLeitorCargo('');
+      setShowAddLeitorModal(false);
+      setLeitorSuccessMsg(`Utilizador de Leitura "${newLeitorNome}" criado com sucesso! Código: ${code.toUpperCase()}`);
+      setTimeout(() => setLeitorSuccessMsg(''), 6000);
+    } catch {
+      alert('Erro ao criar utilizador no Firebase.');
+    } finally {
+      setIsCreatingLeitor(false);
+    }
+  };
+
   // Filtered Submissions
+  // Filtered Submissions (com suporte a filtro por dia)
   const filteredSubmissoes = useMemo(() => {
     return submissoes.filter((sub) => {
       const matchSup = filterSupervisor === 'todos' || sub.supervisorId === filterSupervisor;
       const matchComuna =
         filterComuna === 'todos' ||
         sub.fichas.some((f) => f.comuna.toLowerCase() === filterComuna.toLowerCase());
+      const matchDia = filterDia === 'todos' || sub.data === filterDia;
       const matchSearch =
         searchTerm === '' ||
         sub.supervisorNome.toLowerCase().includes(searchTerm.toLowerCase()) ||
         sub.fichas.some((f) => f.bairro.toLowerCase().includes(searchTerm.toLowerCase()));
 
-      return matchSup && matchComuna && matchSearch;
+      return matchSup && matchComuna && matchDia && matchSearch;
     });
-  }, [submissoes, filterSupervisor, filterComuna, searchTerm]);
+  }, [submissoes, filterSupervisor, filterComuna, filterDia, searchTerm]);
 
   const handleCreateSupervisor = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -293,6 +574,9 @@ export const AdminView: React.FC = () => {
     const code =
       newSupCodigo.trim() || `SUP-00${supervisores.length + 1}`;
 
+    const totalFichas = Math.max(1, Number(newSupTotalFichas) || 25);
+    const diasTrab = Math.max(1, Number(newSupDiasTrabalho) || 5);
+
     const created = await addSupervisor({
       codigo: code,
       nome: newSupNome.trim(),
@@ -301,6 +585,8 @@ export const AdminView: React.FC = () => {
       municipio: newSupMunicipio || 'Sumbe',
       comuna: newSupComuna || 'Sede',
       coordenacao: newSupCoordenacao.trim() || 'Coordenação Geral Sumbe',
+      totalFichasPrevistas: totalFichas,
+      diasTrabalhoPrevistos: diasTrab,
       ativo: true,
     });
 
@@ -309,11 +595,39 @@ export const AdminView: React.FC = () => {
     setNewSupCodigo('');
     setNewSupTelefone('');
     setNewSupCoordenacao('');
+    setNewSupTotalFichas(25);
+    setNewSupDiasTrabalho(5);
     setShowAddSupervisorModal(false);
 
     alert(
-      `Supervisor "${created.nome}" gravado com sucesso no Firebase!\nCódigo de Acesso: ${created.codigo}\nComuna Base: ${created.comuna}\nCoordenação: ${created.coordenacao}`
+      `Supervisor "${created.nome}" gravado com sucesso no Firebase!\nCódigo de Acesso: ${created.codigo}\nComuna Base: ${created.comuna}\nMeta: ${totalFichas} fichas em ${diasTrab} dias de trabalho (~${Math.ceil(totalFichas / diasTrab)} fichas/dia)`
     );
+  };
+
+  const handleOpenEditTarget = (sup: Supervisor) => {
+    setEditingSupTarget(sup);
+    setEditTotalFichas(sup.totalFichasPrevistas || 25);
+    setEditDiasTrabalho(sup.diasTrabalhoPrevistos || 5);
+  };
+
+  const handleSaveSupTarget = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingSupTarget) return;
+    setIsSavingTarget(true);
+    try {
+      const totalFichas = Math.max(1, Number(editTotalFichas) || 25);
+      const diasTrab = Math.max(1, Number(editDiasTrabalho) || 5);
+      await updateSupervisor(editingSupTarget.id, {
+        totalFichasPrevistas: totalFichas,
+        diasTrabalhoPrevistos: diasTrab,
+      });
+      alert(`Metas do supervisor "${editingSupTarget.nome}" atualizadas com sucesso: ${totalFichas} fichas em ${diasTrab} dias!`);
+      setEditingSupTarget(null);
+    } catch {
+      alert('Erro ao atualizar metas no Firebase.');
+    } finally {
+      setIsSavingTarget(false);
+    }
   };
 
   const handleUpdateAdminCode = async (e: React.FormEvent) => {
@@ -375,17 +689,19 @@ export const AdminView: React.FC = () => {
           </div>
         </div>
 
-        {/* BOTÃO PRINCIPAL DE PREENCHER FICHA NA SIDEBAR */}
-        <div className="px-3 pt-3 pb-1">
-          <button
-            onClick={() => setActiveScreen('formulario')}
-            className="w-full bg-[#2667ff] hover:bg-[#1a53db] text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
-            title="Abrir o formulário de preenchimento de fichas"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Preencher Nova Ficha</span>
-          </button>
-        </div>
+        {/* BOTÃO PRINCIPAL DE PREENCHER FICHA NA SIDEBAR (Apenas Admin) */}
+        {!isReadOnly && (
+          <div className="px-3 pt-3 pb-1">
+            <button
+              onClick={() => setActiveScreen('formulario')}
+              className="w-full bg-[#2667ff] hover:bg-[#1a53db] text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
+              title="Abrir o formulário de preenchimento de fichas"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Preencher Nova Ficha</span>
+            </button>
+          </div>
+        )}
 
         <nav className="p-3 space-y-1 flex-1 overflow-y-auto">
           <button
@@ -398,6 +714,24 @@ export const AdminView: React.FC = () => {
           >
             <LayoutDashboard className="w-4 h-4" />
             <span>Dashboard & Gráficos</span>
+          </button>
+
+          {/* NOVO SEPARADOR: FICHAS POR DIA & METAS */}
+          <button
+            onClick={() => setActiveTab('diario')}
+            className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition cursor-pointer ${
+              activeTab === 'diario'
+                ? 'bg-slate-800 text-white border-l-4 border-l-[#2667ff]'
+                : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <CalendarDays className="w-4 h-4 text-emerald-400" />
+              <span>Fichas por Dia & Metas</span>
+            </div>
+            <span className="text-xs bg-slate-900 text-emerald-400 px-2 py-0.5 rounded-full font-bold">
+              {dailyAnalytics.sortedDates.length}d
+            </span>
           </button>
 
           <button
@@ -414,6 +748,24 @@ export const AdminView: React.FC = () => {
             </div>
             <span className="text-xs bg-slate-900 text-[#2667ff] px-2 py-0.5 rounded-full font-bold">
               {supervisores.length}
+            </span>
+          </button>
+
+          {/* NOVO SEPARADOR: UTILIZADORES SÓ DE LEITURA */}
+          <button
+            onClick={() => setActiveTab('leitores')}
+            className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition cursor-pointer ${
+              activeTab === 'leitores'
+                ? 'bg-slate-800 text-white border-l-4 border-l-[#2667ff]'
+                : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <Eye className="w-4 h-4 text-sky-400" />
+              <span>Utilizadores de Leitura</span>
+            </div>
+            <span className="text-xs bg-slate-900 text-sky-400 px-2 py-0.5 rounded-full font-bold">
+              {leitores.length}
             </span>
           </button>
 
@@ -434,17 +786,19 @@ export const AdminView: React.FC = () => {
             </span>
           </button>
 
-          <button
-            onClick={() => setActiveTab('configuracoes')}
-            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition cursor-pointer ${
-              activeTab === 'configuracoes'
-                ? 'bg-slate-800 text-white border-l-4 border-l-[#2667ff]'
-                : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-            }`}
-          >
-            <Settings className="w-4 h-4" />
-            <span>Definições & Firebase</span>
-          </button>
+          {!isReadOnly && (
+            <button
+              onClick={() => setActiveTab('configuracoes')}
+              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition cursor-pointer ${
+                activeTab === 'configuracoes'
+                  ? 'bg-slate-800 text-white border-l-4 border-l-[#2667ff]'
+                  : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+              }`}
+            >
+              <Settings className="w-4 h-4" />
+              <span>Definições & Firebase</span>
+            </button>
+          )}
         </nav>
 
         {/* Rodapé da Sidebar com Status do Firebase */}
@@ -454,7 +808,14 @@ export const AdminView: React.FC = () => {
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
             <span>Firebase Firestore Ativo</span>
           </div>
-          <div className="text-[10px] text-slate-400 font-mono">Admin: {adminCode}</div>
+          {isReadOnly ? (
+            <div className="text-[10px] text-sky-400 font-semibold flex items-center gap-1">
+              <Eye className="w-3 h-3" />
+              <span>Modo Só de Leitura</span>
+            </div>
+          ) : (
+            <div className="text-[10px] text-slate-400 font-mono">Admin: {adminCode}</div>
+          )}
         </div>
       </aside>
 
@@ -465,7 +826,9 @@ export const AdminView: React.FC = () => {
           <div>
             <h2 className="text-lg font-bold text-slate-800 leading-tight">
               {activeTab === 'dashboard' && 'Visão Geral & Gráficos de Mobilização'}
-              {activeTab === 'supervisores' && 'Supervisores Cadastrados & Códigos de Acesso'}
+              {activeTab === 'diario' && 'Controlo Diário de Fichas Lançadas & Cumprimento de Metas'}
+              {activeTab === 'supervisores' && 'Supervisores Cadastrados, Códigos & Metas'}
+              {activeTab === 'leitores' && 'Utilizadores Só de Leitura (Consulta & Auditoria)'}
               {activeTab === 'relatorios' && 'Fichas e Relatórios Recebidos no Firebase'}
               {activeTab === 'configuracoes' && 'Definições da Base de Dados Firebase & Código de Acesso'}
             </h2>
@@ -481,21 +844,34 @@ export const AdminView: React.FC = () => {
               <span>Base de Dados Firebase</span>
             </div>
 
-            <button
-              onClick={() => setActiveScreen('formulario')}
-              className="bg-[#2667ff] hover:bg-[#1a53db] text-white font-bold text-xs px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 shadow-xs transition cursor-pointer"
-              title="Abrir o formulário de preenchimento de fichas"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Preencher Ficha</span>
-            </button>
+            {!isReadOnly && (
+              <button
+                onClick={() => setActiveScreen('formulario')}
+                className="bg-[#2667ff] hover:bg-[#1a53db] text-white font-bold text-xs px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                title="Abrir o formulário de preenchimento de fichas"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Preencher Ficha</span>
+              </button>
+            )}
 
-            <div className="text-right hidden sm:block pl-2 border-l border-slate-200 text-xs">
-              <div className="font-bold text-slate-700">Coordenação Municipal</div>
-              <div className="text-[10px] text-emerald-600 font-medium font-mono">Código: {adminCode}</div>
-            </div>
-            <div className="w-8 h-8 rounded-full bg-[#2667ff] text-white font-bold flex items-center justify-center text-xs shadow-xs">
-              AD
+            {isReadOnly ? (
+              <div className="text-right hidden sm:block pl-2 border-l border-slate-200 text-xs">
+                <div className="font-bold text-slate-700">{userSession?.nome}</div>
+                <div className="text-[10px] text-sky-600 font-semibold flex items-center justify-end gap-1">
+                  <Eye className="w-3 h-3" />
+                  <span>Acesso de Consulta</span>
+                </div>
+              </div>
+            ) : (
+              <div className="text-right hidden sm:block pl-2 border-l border-slate-200 text-xs">
+                <div className="font-bold text-slate-700">Coordenação Municipal</div>
+                <div className="text-[10px] text-emerald-600 font-medium font-mono">Código: {adminCode}</div>
+              </div>
+            )}
+
+            <div className={`w-8 h-8 rounded-full ${isReadOnly ? 'bg-sky-600' : 'bg-[#2667ff]'} text-white font-bold flex items-center justify-center text-xs shadow-xs`}>
+              {isReadOnly ? 'LT' : 'AD'}
             </div>
           </div>
         </header>
@@ -555,6 +931,39 @@ export const AdminView: React.FC = () => {
                   <div className="text-[11px] text-slate-500 mt-1.5">
                     {stats.totalSim.toLocaleString('pt-PT')} Sim vs {stats.totalNao.toLocaleString('pt-PT')} Não
                   </div>
+                </div>
+              </div>
+
+              {/* BANNER DE DESTAQUE: CONTROLO DE LANÇAMENTOS DIÁRIOS POR SUPERVISOR (+5 DIAS) */}
+              <div className="bg-gradient-to-r from-emerald-900 via-slate-900 to-blue-950 rounded-xl p-4 sm:p-5 text-white shadow-xs border border-emerald-700/40 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center shrink-0">
+                    <CalendarDays className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-bold text-sm sm:text-base text-white">
+                        Controlo Diário de Lançamentos por Supervisor (Campanha +5 Dias)
+                      </h4>
+                      <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-bold px-2 py-0.5 rounded border border-emerald-400/30">
+                        {dailyAnalytics.sortedDates.length} Dias Registados
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-300 mt-1 max-w-2xl">
+                      Acompanhe dia a dia o cumprimento das metas: total de <strong>{dailyAnalytics.totalGeralLancado} de {dailyAnalytics.totalGeralPrevisto} fichas</strong> lançadas ({dailyAnalytics.taxaGlobalCumprimento}% da meta global). Veja a matriz detalhada de quantas fichas cada supervisor lançou em cada dia.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0 w-full md:w-auto">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('diario')}
+                    className="w-full md:w-auto bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-2 px-4 rounded-lg flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
+                  >
+                    <Calendar className="w-3.5 h-3.5" />
+                    <span>Ver Fichas por Dia & Metas</span>
+                  </button>
                 </div>
               </div>
 
@@ -971,6 +1380,289 @@ export const AdminView: React.FC = () => {
                 </div>
               </div>
 
+              {/* ============================================================ */}
+              {/* PAINEL E GRÁFICOS: TAXA DE ACEITAÇÃO E DE REJEIÇÃO (SIM VS NÃO) */}
+              {/* ============================================================ */}
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                  <div>
+                    <h3 className="font-bold text-slate-800 text-base flex items-center gap-2">
+                      <ThumbsUp className="w-5 h-5 text-emerald-600" />
+                      <span>Gráficos da Taxa de Aceitação e de Rejeição</span>
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Rácio entre pessoas que acolheram favoravelmente a mensagem (Sim) e recusas (Não) no Município do Sumbe
+                    </p>
+                  </div>
+
+                  {/* Toggle para alternar visualização por Supervisor ou por Bairro */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-semibold text-slate-500 hidden sm:inline">Visualizar barras por:</span>
+                    <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setAcceptanceViewMode('supervisores')}
+                        className={`px-3 py-1 rounded-md font-semibold transition cursor-pointer ${
+                          acceptanceViewMode === 'supervisores'
+                            ? 'bg-[#2667ff] text-white shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        Por Supervisor
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAcceptanceViewMode('bairros')}
+                        className={`px-3 py-1 rounded-md font-semibold transition cursor-pointer ${
+                          acceptanceViewMode === 'bairros'
+                            ? 'bg-[#2667ff] text-white shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        Por Bairro
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 4 Mini Cartões de Destaque da Taxa de Aceitação e Rejeição */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+                  <div className="bg-emerald-50/70 border border-emerald-200 p-3.5 rounded-xl">
+                    <div className="text-[11px] font-bold text-emerald-800 uppercase flex items-center gap-1.5">
+                      <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Taxa de Aceitação</span>
+                    </div>
+                    <div className="text-2xl sm:text-3xl font-extrabold text-emerald-700 mt-1">
+                      {acceptanceMetrics.taxaAceitacao}%
+                    </div>
+                    <div className="text-[11px] text-emerald-800 font-medium mt-0.5">
+                      {acceptanceMetrics.totalSim.toLocaleString('pt-PT')} respostas afirmativas
+                    </div>
+                  </div>
+
+                  <div className="bg-red-50/70 border border-red-200 p-3.5 rounded-xl">
+                    <div className="text-[11px] font-bold text-red-800 uppercase flex items-center gap-1.5">
+                      <ThumbsDown className="w-3.5 h-3.5 text-red-600" />
+                      <span>Taxa de Rejeição</span>
+                    </div>
+                    <div className="text-2xl sm:text-3xl font-extrabold text-red-600 mt-1">
+                      {acceptanceMetrics.taxaRejeicao}%
+                    </div>
+                    <div className="text-[11px] text-red-700 font-medium mt-0.5">
+                      {acceptanceMetrics.totalNao.toLocaleString('pt-PT')} recusas / não aceitou
+                    </div>
+                  </div>
+
+                  <div className="bg-blue-50/70 border border-blue-200 p-3.5 rounded-xl">
+                    <div className="text-[11px] font-bold text-blue-800 uppercase flex items-center gap-1.5">
+                      <TrendingUp className="w-3.5 h-3.5 text-[#2667ff]" />
+                      <span>Margem Líquida</span>
+                    </div>
+                    <div className="text-2xl sm:text-3xl font-extrabold text-[#1a53db] mt-1">
+                      {acceptanceMetrics.margemLiquida > 0 ? `+${acceptanceMetrics.margemLiquida}%` : `${acceptanceMetrics.margemLiquida}%`}
+                    </div>
+                    <div className="text-[11px] text-blue-700 font-medium mt-0.5">
+                      Diferencial Aceitação vs Rejeição
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-50 border border-slate-200 p-3.5 rounded-xl">
+                    <div className="text-[11px] font-bold text-slate-600 uppercase flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Rácio de Concordância</span>
+                    </div>
+                    <div className="text-2xl sm:text-3xl font-extrabold text-slate-800 mt-1">
+                      {acceptanceMetrics.ratio} : 1
+                    </div>
+                    <div className="text-[11px] text-slate-500 font-medium mt-0.5">
+                      Sim para cada 1 Não registado
+                    </div>
+                  </div>
+                </div>
+
+                {/* DOIS GRÁFICOS: DONUT GLOBAL E BARRAS COMPARATIVAS */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 pt-1">
+                  {/* GRÁFICO 1: DONUT CONSOLIDADO ACEITAÇÃO VS REJEIÇÃO (4 colunas) */}
+                  <div className="lg:col-span-4 bg-slate-50/90 p-4 rounded-xl border border-slate-200 flex flex-col justify-between">
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider text-center mb-0.5">
+                        Proporção Global (Sim vs Não)
+                      </h4>
+                      <p className="text-[11px] text-slate-500 text-center mb-2">
+                        Total consolidado: {acceptanceMetrics.totalRespostas.toLocaleString('pt-PT')} respostas
+                      </p>
+
+                      <div className="h-56 w-full relative">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie
+                              data={acceptanceMetrics.donutData}
+                              cx="50%"
+                              cy="50%"
+                              innerRadius={62}
+                              outerRadius={88}
+                              paddingAngle={3}
+                              dataKey="value"
+                            >
+                              <Cell fill="#16a34a" />
+                              <Cell fill="#ef4444" />
+                            </Pie>
+                            <Tooltip
+                              formatter={(value: any, name: any, item: any) => [
+                                `${Number(value).toLocaleString('pt-PT')} (${item?.payload?.percentStr})`,
+                                name,
+                              ]}
+                              contentStyle={{
+                                backgroundColor: '#1e293b',
+                                borderColor: '#334155',
+                                borderRadius: '8px',
+                                color: '#fff',
+                                fontSize: '11px',
+                              }}
+                            />
+                          </PieChart>
+                        </ResponsiveContainer>
+                        {/* Indicador Central no Donut */}
+                        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                          <span className="text-2xl font-black text-emerald-700">
+                            {acceptanceMetrics.taxaAceitacao}%
+                          </span>
+                          <span className="text-[10px] uppercase font-bold text-slate-500">
+                            Aceitação
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 pt-3 border-t border-slate-200 text-xs">
+                      <div className="flex items-center justify-between bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-200">
+                        <div className="flex items-center gap-2">
+                          <span className="w-3 h-3 rounded-full bg-emerald-600"></span>
+                          <span className="font-semibold text-emerald-950">Aceitação (Sim)</span>
+                        </div>
+                        <span className="font-mono font-bold text-emerald-800">
+                          {acceptanceMetrics.taxaAceitacao}% ({acceptanceMetrics.totalSim.toLocaleString('pt-PT')})
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between bg-red-50 px-3 py-2 rounded-lg border border-red-200">
+                        <div className="flex items-center gap-2">
+                          <span className="w-3 h-3 rounded-full bg-red-600"></span>
+                          <span className="font-semibold text-red-950">Rejeição (Não)</span>
+                        </div>
+                        <span className="font-mono font-bold text-red-700">
+                          {acceptanceMetrics.taxaRejeicao}% ({acceptanceMetrics.totalNao.toLocaleString('pt-PT')})
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* GRÁFICO 2: BARRAS COMPARATIVAS POR SUPERVISOR / BAIRRO (8 colunas) */}
+                  <div className="lg:col-span-8 bg-slate-50/90 p-4 rounded-xl border border-slate-200 flex flex-col justify-between">
+                    <div>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 mb-2">
+                        <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                          {acceptanceViewMode === 'supervisores'
+                            ? 'Taxa % de Aceitação e Rejeição por Supervisor'
+                            : 'Taxa % de Aceitação e Rejeição nos Bairros do Sumbe'}
+                        </h4>
+                        <span className="text-[11px] text-slate-500">
+                          Valores em percentagem (%)
+                        </span>
+                      </div>
+
+                      <div className="h-64 w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart
+                            data={
+                              acceptanceViewMode === 'supervisores'
+                                ? supervisorAcceptanceData
+                                : bairroAcceptanceData.slice(0, 8)
+                            }
+                            margin={{ top: 10, right: 15, left: -15, bottom: 25 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                            <XAxis
+                              dataKey="name"
+                              tick={{ fontSize: 11, fill: '#475569', fontWeight: 600 }}
+                              interval={0}
+                              angle={-15}
+                              textAnchor="end"
+                            />
+                            <YAxis
+                              tick={{ fontSize: 11, fill: '#64748b' }}
+                              domain={[0, 100]}
+                              unit="%"
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                backgroundColor: '#1e293b',
+                                borderColor: '#334155',
+                                borderRadius: '8px',
+                                color: '#fff',
+                                fontSize: '12px',
+                              }}
+                              formatter={(value: any, name: any) => [
+                                `${value}%`,
+                                name,
+                              ]}
+                              labelFormatter={(label, payload) => {
+                                const item = payload?.[0]?.payload;
+                                if (!item) return label;
+                                return `${item.nomeCompleto || item.name} • Total: ${item.total} respostas (${item.sim} Sim / ${item.nao} Não)`;
+                              }}
+                            />
+                            <Legend
+                              verticalAlign="top"
+                              align="right"
+                              iconType="circle"
+                              wrapperStyle={{ fontSize: '11px', paddingBottom: '10px' }}
+                            />
+                            <Bar
+                              dataKey="taxaSim"
+                              name="Taxa de Aceitação (Sim %)"
+                              fill="#16a34a"
+                              radius={[4, 4, 0, 0]}
+                              maxBarSize={30}
+                            />
+                            <Bar
+                              dataKey="taxaNao"
+                              name="Taxa de Rejeição (Não %)"
+                              fill="#ef4444"
+                              radius={[4, 4, 0, 0]}
+                              maxBarSize={30}
+                            />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+
+                    {/* Resumo em mini-tabela rápida das taxas */}
+                    <div className="mt-3 pt-3 border-t border-slate-200">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 text-[11px]">
+                        {(acceptanceViewMode === 'supervisores'
+                          ? supervisorAcceptanceData
+                          : bairroAcceptanceData.slice(0, 8)
+                        ).slice(0, 4).map((item) => (
+                          <div key={item.name} className="bg-white p-2 rounded border border-slate-200">
+                            <div className="font-semibold text-slate-800 truncate" title={item.name}>
+                              {item.name}
+                            </div>
+                            <div className="flex items-center justify-between mt-1 text-[10px]">
+                              <span className="text-emerald-700 font-bold font-mono">
+                                Sim: {item.taxaSimStr}
+                              </span>
+                              <span className="text-red-600 font-bold font-mono">
+                                Não: {item.taxaNaoStr}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               {/* ÚLTIMAS FICHAS ENVIADAS */}
               <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
                 <div className="p-4 sm:p-5 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1061,7 +1753,361 @@ export const AdminView: React.FC = () => {
           )}
 
           {/* ============================================================== */}
-          {/* TAB 2: GESTÃO DOS 9 SUPERVISORES & CÓDIGOS DE ACESSO */}
+          {/* TAB 2: CONTROLO DIÁRIO DE FICHAS LANÇADAS & METAS (POR DIA) */}
+          {/* ============================================================== */}
+          {activeTab === 'diario' && (
+            <div className="space-y-6">
+              {/* Cabeçalho da Aba */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200 shadow-xs">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <CalendarDays className="w-5 h-5 text-emerald-600" />
+                    <h3 className="text-lg font-bold text-slate-800">
+                      Controlo Diário de Fichas Lançadas & Cumprimento de Metas
+                    </h3>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Separação dia a dia da mobilização. Saiba exatamente <strong>quantas fichas cada supervisor lançou em cada dia de trabalho</strong> e acompanhe o ritmo em relação à meta total estabelecida para os vários dias da campanha no Sumbe.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-xs bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>{dailyAnalytics.sortedDates.length} dias registados</span>
+                  </span>
+                  {!isReadOnly && (
+                    <button
+                      onClick={() => setShowAddSupervisorModal(true)}
+                      className="bg-[#2667ff] hover:bg-[#1a53db] text-white font-semibold px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>+ Supervisor com Meta</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* 4 KPIs de Progresso Diário */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs border-l-4 border-l-emerald-500">
+                  <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                    Dias de Trabalho Ativos
+                  </div>
+                  <div className="text-2xl sm:text-3xl font-extrabold text-slate-900">
+                    {dailyAnalytics.sortedDates.length} dias
+                  </div>
+                  <div className="text-[11px] text-emerald-700 font-medium mt-1.5 flex items-center gap-1">
+                    <CheckSquare className="w-3.5 h-3.5" />
+                    <span>Campanha ativa (+5 dias previstos)</span>
+                  </div>
+                </div>
+
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs border-l-4 border-l-[#2667ff]">
+                  <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                    Total Fichas Lançadas
+                  </div>
+                  <div className="text-2xl sm:text-3xl font-extrabold text-[#1a53db]">
+                    {dailyAnalytics.totalGeralLancado} <span className="text-sm font-normal text-slate-400">/ {dailyAnalytics.totalGeralPrevisto}</span>
+                  </div>
+                  <div className="text-[11px] text-slate-500 mt-1.5">
+                    {dailyAnalytics.taxaGlobalCumprimento}% da meta total atingida
+                  </div>
+                </div>
+
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs border-l-4 border-l-blue-500">
+                  <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                    Média de Lançamento Diário
+                  </div>
+                  <div className="text-2xl sm:text-3xl font-extrabold text-slate-900">
+                    {(dailyAnalytics.totalGeralLancado / (dailyAnalytics.sortedDates.length || 1)).toFixed(1)}
+                  </div>
+                  <div className="text-[11px] text-slate-500 mt-1.5">
+                    Fichas por dia no município do Sumbe
+                  </div>
+                </div>
+
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs border-l-4 border-l-indigo-500">
+                  <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                    Supervisores com Lançamentos
+                  </div>
+                  <div className="text-2xl sm:text-3xl font-extrabold text-slate-900">
+                    {dailyAnalytics.supervisorMatrix.filter((m) => m.totalFichasLancadas > 0).length} de {supervisores.length}
+                  </div>
+                  <div className="text-[11px] text-slate-500 mt-1.5">
+                    Coordenadores a enviar fichas diárias
+                  </div>
+                </div>
+              </div>
+
+              {/* MATRIZ DIÁRIA: TABELA COMPLETA DE SUPERVISORES POR DIA DE TRABALHO */}
+              <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+                <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h4 className="font-bold text-slate-800 text-base flex items-center gap-2">
+                      <Target className="w-5 h-5 text-[#2667ff]" />
+                      <span>Matriz de Desempenho Diário dos Supervisores</span>
+                    </h4>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Visualização individual: quantas fichas cada coordenador lançou em cada dia específico de trabalho
+                    </p>
+                  </div>
+                  <div className="text-xs text-slate-500 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                    <span>Verde: meta diária atingida</span>
+                    <span className="w-2.5 h-2.5 rounded-full bg-[#2667ff] ml-2"></span>
+                    <span>Azul: com lançamentos</span>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead className="bg-slate-50 text-slate-700 font-semibold uppercase tracking-wider border-b border-slate-200">
+                      <tr>
+                        <th className="py-3 px-3 w-10 text-center">#</th>
+                        <th className="py-3 px-3 min-w-[170px]">Supervisor</th>
+                        <th className="py-3 px-3 text-center min-w-[100px]">Meta Campanha</th>
+                        <th className="py-3 px-3 text-center min-w-[85px]">Meta/Dia</th>
+
+                        {/* Colunas Dinâmicas para Cada Data / Dia Registado */}
+                        {dailyAnalytics.sortedDates.map((d) => {
+                          const info = dailyAnalytics.dateLabels[d];
+                          return (
+                            <th key={d} className="py-3 px-3 text-center bg-blue-50/40 border-l border-slate-200 min-w-[95px]">
+                              <div className="font-bold text-[#1a53db]">{info?.label || d}</div>
+                              <div className="text-[10px] text-slate-400 font-normal lowercase">{d}</div>
+                            </th>
+                          );
+                        })}
+
+                        <th className="py-3 px-3 text-center bg-slate-100 border-l border-slate-200 font-bold min-w-[100px]">
+                          Total Lançado
+                        </th>
+                        <th className="py-3 px-3 text-center min-w-[140px]">% Meta</th>
+                        {!isReadOnly && <th className="py-3 px-3 text-right min-w-[90px]">Ações</th>}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {dailyAnalytics.supervisorMatrix.map((item, idx) => {
+                        const sup = item.supervisor;
+                        return (
+                          <tr key={sup.id} className="hover:bg-slate-50 transition">
+                            <td className="py-2.5 px-3 text-center font-mono font-bold text-slate-400">
+                              #{idx + 1}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <div className="font-bold text-slate-900">{sup.nome}</div>
+                              <div className="text-[11px] text-slate-500 font-mono flex items-center gap-1.5">
+                                <span className="text-[#2667ff] font-bold">{sup.codigo}</span>
+                                <span>&bull; {sup.comuna}</span>
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-3 text-center font-semibold text-slate-700">
+                              <span className="bg-slate-100 px-2 py-1 rounded font-mono font-bold">
+                                {item.totalPrevisto} fichas
+                              </span>
+                              <div className="text-[10px] text-slate-400 mt-0.5">
+                                em {item.diasPrevistos} dias
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-3 text-center font-semibold text-slate-600">
+                              <span className="font-mono text-slate-800">
+                                ~{item.metaDiaria}/dia
+                              </span>
+                            </td>
+
+                            {/* Fichas Lançadas em Cada Dia de Trabalho */}
+                            {dailyAnalytics.sortedDates.map((d) => {
+                              const fichasNoDia = item.fichasPorData[d] || 0;
+                              const pessoasNoDia = item.pessoasPorData[d] || 0;
+                              const atingiuMeta = fichasNoDia >= item.metaDiaria && item.metaDiaria > 0;
+
+                              return (
+                                <td key={d} className="py-2.5 px-3 text-center border-l border-slate-100">
+                                  {fichasNoDia > 0 ? (
+                                    <div
+                                      className={`inline-flex flex-col items-center justify-center px-2 py-1 rounded-lg border font-mono font-bold text-xs ${
+                                        atingiuMeta
+                                          ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                                          : 'bg-blue-50 text-[#1a53db] border-blue-200'
+                                      }`}
+                                      title={`${fichasNoDia} ficha(s) lançada(s) & ${pessoasNoDia.toLocaleString('pt-PT')} pessoas mobilizadas`}
+                                    >
+                                      <span>{fichasNoDia} {fichasNoDia === 1 ? 'ficha' : 'fichas'}</span>
+                                      <span className="text-[9px] font-normal text-slate-500">
+                                        {pessoasNoDia} pess.
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <span className="text-slate-300 font-mono text-xs">-</span>
+                                  )}
+                                </td>
+                              );
+                            })}
+
+                            {/* Total Acumulado */}
+                            <td className="py-2.5 px-3 text-center bg-slate-50 border-l border-slate-200">
+                              <span className="font-mono font-black text-sm text-[#1a53db]">
+                                {item.totalFichasLancadas}
+                              </span>
+                              <div className="text-[10px] text-slate-500">
+                                {item.totalPessoasLancadas.toLocaleString('pt-PT')} pess.
+                              </div>
+                            </td>
+
+                            {/* Progresso vs Meta */}
+                            <td className="py-2.5 px-3">
+                              <div className="space-y-1">
+                                <div className="flex items-center justify-between text-[11px]">
+                                  <span className="font-bold font-mono text-slate-800">
+                                    {item.percentualStr}
+                                  </span>
+                                  <span className="text-slate-400 text-[10px]">
+                                    {item.totalFichasLancadas}/{item.totalPrevisto}
+                                  </span>
+                                </div>
+                                <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full transition-all duration-500 ${
+                                      item.percentualCumprido >= 100
+                                        ? 'bg-emerald-500'
+                                        : item.percentualCumprido >= 50
+                                        ? 'bg-[#2667ff]'
+                                        : 'bg-amber-500'
+                                    }`}
+                                    style={{ width: `${Math.min(100, item.percentualCumprido)}%` }}
+                                  ></div>
+                                </div>
+                              </div>
+                            </td>
+
+                            {/* Ação Editar Meta */}
+                            {!isReadOnly && (
+                              <td className="py-2.5 px-3 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenEditTarget(sup)}
+                                  className="text-[#2667ff] hover:text-[#1a53db] hover:bg-blue-50 p-1.5 rounded transition cursor-pointer text-[11px] font-semibold inline-flex items-center gap-1"
+                                  title="Ajustar total de fichas ou dias previstos"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                  <span>Metas</span>
+                                </button>
+                              </td>
+                            )}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+
+                    {/* Linha de Totais Gerais por Dia */}
+                    <tfoot className="bg-slate-100 text-slate-800 font-bold border-t-2 border-slate-300">
+                      <tr>
+                        <td colSpan={4} className="py-3 px-4 uppercase tracking-wider text-xs font-black text-slate-700">
+                          Total Geral de Fichas por Dia (Sumbe):
+                        </td>
+
+                        {/* Soma de cada dia */}
+                        {dailyAnalytics.sortedDates.map((d) => {
+                          const tot = dailyAnalytics.totalsByDate[d] || { totalFichas: 0, totalPessoas: 0, supervisoresAtivos: 0 };
+                          return (
+                            <td key={d} className="py-3 px-3 text-center border-l border-slate-200 bg-blue-100/60">
+                              <div className="font-mono font-black text-sm text-[#1a53db]">
+                                {tot.totalFichas} fichas
+                              </div>
+                              <div className="text-[10px] text-slate-500 font-normal">
+                                {tot.totalPessoas.toLocaleString('pt-PT')} pess. ({tot.supervisoresAtivos} sup.)
+                              </div>
+                            </td>
+                          );
+                        })}
+
+                        <td className="py-3 px-3 text-center bg-slate-200/80 border-l border-slate-300">
+                          <div className="font-mono font-black text-base text-[#1b4fd8]">
+                            {dailyAnalytics.totalGeralLancado}
+                          </div>
+                          <div className="text-[10px] text-slate-600 font-semibold uppercase">Total Fichas</div>
+                        </td>
+
+                        <td className="py-3 px-3 text-center font-mono font-bold text-slate-800">
+                          {dailyAnalytics.taxaGlobalCumprimento}% global
+                        </td>
+
+                        {!isReadOnly && <td></td>}
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+
+              {/* GRÁFICO DE EVOLUÇÃO DIÁRIA (RECHARTS BAR CHART) */}
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-100">
+                  <div>
+                    <h4 className="font-bold text-slate-800 text-base flex items-center gap-2">
+                      <BarChart3 className="w-5 h-5 text-emerald-600" />
+                      <span>Ritmo Diário de Lançamento de Fichas no Sumbe</span>
+                    </h4>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Comparativo de volume de fichas recolhidas ao longo dos dias de trabalho da campanha
+                    </p>
+                  </div>
+                  <div className="text-xs text-slate-500 bg-slate-50 border border-slate-200 px-3 py-1 rounded">
+                    Média: <strong className="text-slate-800">{(dailyAnalytics.totalGeralLancado / (dailyAnalytics.sortedDates.length || 1)).toFixed(1)}</strong> fichas/dia
+                  </div>
+                </div>
+
+                <div className="h-64 w-full pt-2">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={dailyAnalytics.chartData}
+                      margin={{ top: 10, right: 20, left: -10, bottom: 20 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                      <XAxis
+                        dataKey="diaLabel"
+                        tick={{ fontSize: 11, fill: '#475569', fontWeight: 600 }}
+                      />
+                      <YAxis tick={{ fontSize: 11, fill: '#64748b' }} allowDecimals={false} />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: '#1e293b',
+                          borderColor: '#334155',
+                          borderRadius: '8px',
+                          color: '#fff',
+                          fontSize: '12px',
+                        }}
+                        formatter={(value: any, name: any) => [
+                          `${value} ${name === 'fichas' ? 'fichas lançadas' : 'pessoas mobilizadas'}`,
+                          name === 'fichas' ? 'Volume de Fichas' : 'Pessoas Mobilizadas',
+                        ]}
+                        labelFormatter={(label, payload) => {
+                          const item = payload?.[0]?.payload;
+                          return item ? `${item.diaLabel} • ${item.date} (${item.supervisoresAtivos} supervisores ativos)` : label;
+                        }}
+                      />
+                      <Legend
+                        verticalAlign="top"
+                        align="right"
+                        iconType="circle"
+                        wrapperStyle={{ fontSize: '11px', paddingBottom: '10px' }}
+                      />
+                      <Bar
+                        dataKey="fichas"
+                        name="Fichas Lançadas no Dia"
+                        fill="#16a34a"
+                        radius={[6, 6, 0, 0]}
+                        maxBarSize={45}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ============================================================== */}
+          {/* TAB 3: GESTÃO DOS 9 SUPERVISORES & CÓDIGOS DE ACESSO */}
           {/* ============================================================== */}
           {activeTab === 'supervisores' && (
             <div className="space-y-6">
@@ -1074,13 +2120,15 @@ export const AdminView: React.FC = () => {
                     Cada supervisor acede <strong>apenas com o seu código de utilizador</strong> (sem senha). Ao entrar, o seu Nome, Município e Comuna ficam logo fixados na ficha.
                   </p>
                 </div>
-                <button
-                  onClick={() => setShowAddSupervisorModal(true)}
-                  className="bg-[#2667ff] hover:bg-[#1a53db] text-white font-semibold px-4 py-2.5 rounded-lg text-sm flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Cadastrar Novo Supervisor</span>
-                </button>
+                {!isReadOnly && (
+                  <button
+                    onClick={() => setShowAddSupervisorModal(true)}
+                    className="bg-[#2667ff] hover:bg-[#1a53db] text-white font-semibold px-4 py-2.5 rounded-lg text-sm flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Cadastrar Novo Supervisor</span>
+                  </button>
+                )}
               </div>
 
               {/* Grid dos 9 Supervisores */}
@@ -1154,10 +2202,10 @@ export const AdminView: React.FC = () => {
                           </div>
                         </div>
 
-                        {/* Estatísticas do supervisor */}
+                        {/* Estatísticas do supervisor e Metas Diárias */}
                         <div className="grid grid-cols-2 gap-2 mt-3 text-center">
                           <div className="bg-[#eff4ff] p-2 rounded border border-[#bfdbfe]">
-                            <div className="text-[11px] text-slate-500 font-medium">Fichas Enviadas</div>
+                            <div className="text-[11px] text-slate-500 font-medium">Fichas Lançadas</div>
                             <div className="text-base font-bold text-[#1a53db]">
                               {supSubmissions.length}
                             </div>
@@ -1169,31 +2217,61 @@ export const AdminView: React.FC = () => {
                             </div>
                           </div>
                         </div>
+
+                        {/* Detalhe do Plano de Trabalho (+5 Dias) */}
+                        <div className="mt-2.5 p-2 bg-slate-50 rounded-lg border border-slate-200 text-[11px] flex items-center justify-between">
+                          <div>
+                            <span className="text-slate-500 block">Total Previsto:</span>
+                            <strong className="text-slate-800">{sup.totalFichasPrevistas || 25} fichas</strong> em <strong>{sup.diasTrabalhoPrevistos || 5} dias</strong>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-slate-500 block">Meta Diária:</span>
+                            <span className="font-mono font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                              ~{Math.ceil((sup.totalFichasPrevistas || 25) / (sup.diasTrabalhoPrevistos || 5))}/dia
+                            </span>
+                          </div>
+                        </div>
                       </div>
 
                       {/* Ações */}
-                      <div className="p-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-2">
-                        <button
-                          onClick={() => handleTestAsSupervisor(sup)}
-                          className="flex-1 bg-white hover:bg-[#eff4ff] hover:text-[#1a53db] text-slate-700 border border-slate-200 py-1.5 px-2 rounded text-xs font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer"
-                          title="Entrar com a conta deste supervisor para ver o formulário dele"
-                        >
-                          <UserCheck className="w-3.5 h-3.5 text-[#2667ff]" />
-                          <span>Entrar como {sup.nome.split(' ')[0]}</span>
-                        </button>
+                      {!isReadOnly ? (
+                        <div className="p-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-2">
+                          <button
+                            onClick={() => handleTestAsSupervisor(sup)}
+                            className="flex-1 bg-white hover:bg-[#eff4ff] hover:text-[#1a53db] text-slate-700 border border-slate-200 py-1.5 px-2 rounded text-xs font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer"
+                            title="Entrar com a conta deste supervisor para ver o formulário dele"
+                          >
+                            <UserCheck className="w-3.5 h-3.5 text-[#2667ff]" />
+                            <span>Entrar como {sup.nome.split(' ')[0]}</span>
+                          </button>
 
-                        <button
-                          onClick={() => {
-                            if (window.confirm(`Deseja remover o supervisor ${sup.nome}?`)) {
-                              deleteSupervisor(sup.id);
-                            }
-                          }}
-                          className="text-slate-400 hover:text-red-600 p-1.5 rounded hover:bg-white transition"
-                          title="Remover supervisor"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditTarget(sup)}
+                            className="bg-white hover:bg-emerald-50 text-emerald-700 border border-emerald-200 hover:border-emerald-300 py-1.5 px-2 rounded text-xs font-semibold flex items-center justify-center gap-1 transition cursor-pointer"
+                            title="Ajustar total de fichas da campanha e dias de trabalho"
+                          >
+                            <Edit3 className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Metas</span>
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              if (window.confirm(`Deseja remover o supervisor ${sup.nome}?`)) {
+                                deleteSupervisor(sup.id);
+                              }
+                            }}
+                            className="text-slate-400 hover:text-red-600 p-1.5 rounded hover:bg-white transition"
+                            title="Remover supervisor"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="p-2.5 bg-slate-50 border-t border-slate-100 text-center text-[11px] text-slate-400 font-medium">
+                          Consulta de Perfil Ativo
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -1202,7 +2280,180 @@ export const AdminView: React.FC = () => {
           )}
 
           {/* ============================================================== */}
-          {/* TAB 3: RELATÓRIOS & FICHAS */}
+          {/* TAB 3: GESTÃO DE UTILIZADORES SÓ DE LEITURA (CONSULTA / AUDITORIA) */}
+          {/* ============================================================== */}
+          {activeTab === 'leitores' && (
+            <div className="space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200 shadow-xs">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Eye className="w-5 h-5 text-[#2667ff]" />
+                    <h3 className="text-lg font-bold text-slate-800">
+                      Utilizadores Só de Leitura de Dados (Consulta & Auditoria)
+                    </h3>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Crie contas com permissão estrita de <strong>apenas leitura</strong>. Estes utilizadores podem consultar todos os gráficos, dashboards e relatórios de campo, <strong>sem poder alterar, preencher ou eliminar dados</strong>.
+                  </p>
+                </div>
+                {!isReadOnly && (
+                  <button
+                    onClick={() => setShowAddLeitorModal(true)}
+                    className="bg-[#2667ff] hover:bg-[#1a53db] text-white font-semibold px-4 py-2.5 rounded-lg text-sm flex items-center justify-center gap-2 shadow-xs transition cursor-pointer shrink-0"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Cadastrar Utilizador de Leitura</span>
+                  </button>
+                )}
+              </div>
+
+              {leitorSuccessMsg && (
+                <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold rounded-xl flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>{leitorSuccessMsg}</span>
+                  </div>
+                  <button onClick={() => setLeitorSuccessMsg('')} className="text-emerald-700 hover:text-emerald-950 font-bold">&times;</button>
+                </div>
+              )}
+
+              {/* Informações sobre o Perfil de Leitura */}
+              <div className="bg-sky-50/70 border border-sky-200 p-4 rounded-xl text-xs text-sky-950 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="font-bold flex items-center gap-1.5 text-sky-900">
+                    <Shield className="w-4 h-4 text-[#2667ff]" />
+                    <span>Regras do Utilizador Só de Leitura:</span>
+                  </div>
+                  <ul className="list-disc list-inside text-sky-800 space-y-0.5 text-[11px]">
+                    <li>Acesso completo aos gráficos, KPIs municipais, mapas e relatórios enviados;</li>
+                    <li>Bloqueio total contra eliminação de dados ou alteração de fichas;</li>
+                    <li>Bloqueio ao formulário de envio de novas fichas;</li>
+                    <li>Autenticação simplificada e segura com código confidencial (ex: <code>LEITOR-001</code>).</li>
+                  </ul>
+                </div>
+                <div className="bg-white p-3 rounded-lg border border-sky-200 text-center shrink-0">
+                  <div className="text-[10px] text-slate-500 font-semibold uppercase">Total de Leitores</div>
+                  <div className="text-2xl font-black text-[#2667ff]">{leitores.length}</div>
+                </div>
+              </div>
+
+              {/* Lista de Utilizadores de Leitura */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                {leitores.length === 0 ? (
+                  <div className="col-span-full bg-white p-8 rounded-xl border border-slate-200 text-center space-y-3">
+                    <div className="w-12 h-12 bg-sky-50 text-[#2667ff] rounded-full mx-auto flex items-center justify-center">
+                      <Eye className="w-6 h-6" />
+                    </div>
+                    <h4 className="font-bold text-slate-800 text-base">Nenhum Utilizador de Leitura Cadastrado</h4>
+                    <p className="text-xs text-slate-500 max-w-md mx-auto">
+                      Permita que auditores, diretores municipais ou técnicos consultem os dados de mobilização sem risco de alterar os registos.
+                    </p>
+                    {!isReadOnly && (
+                      <button
+                        onClick={() => setShowAddLeitorModal(true)}
+                        className="bg-[#2667ff] hover:bg-[#1a53db] text-white font-semibold text-xs px-4 py-2 rounded-lg inline-flex items-center gap-1.5 transition cursor-pointer"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>Criar Primeiro Utilizador de Leitura</span>
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  leitores.map((leitor) => (
+                    <div
+                      key={leitor.id}
+                      className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden flex flex-col justify-between hover:border-[#2667ff] transition"
+                    >
+                      <div className="p-5">
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="flex items-center gap-3">
+                            <div className="w-11 h-11 rounded-full bg-sky-100 text-[#1a53db] font-bold flex items-center justify-center text-sm shadow-xs">
+                              <Eye className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <h4 className="font-bold text-slate-900 text-base">{leitor.nome}</h4>
+                              <div className="text-xs text-slate-500">
+                                Cargo: <strong className="text-slate-700">{leitor.cargo || 'Consulta & Auditoria'}</strong>
+                              </div>
+                            </div>
+                          </div>
+                          <span
+                            className={`badge ${
+                              leitor.ativo ? 'badge-success' : 'badge-warning'
+                            }`}
+                          >
+                            {leitor.ativo ? 'Ativo' : 'Inativo'}
+                          </span>
+                        </div>
+
+                        {/* Código de Acesso com Cópia */}
+                        <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 my-3 flex items-center justify-between">
+                          <div>
+                            <span className="text-[10px] text-slate-500 block uppercase font-semibold">
+                              Código de Acesso
+                            </span>
+                            <span className="font-mono font-bold text-sm text-[#1a53db]">
+                              {leitor.codigo}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(leitor.codigo);
+                              alert(`Código "${leitor.codigo}" copiado com sucesso!`);
+                            }}
+                            className="p-1.5 text-slate-500 hover:text-[#2667ff] hover:bg-white rounded transition cursor-pointer"
+                            title="Copiar código de acesso"
+                          >
+                            <Copy className="w-4 h-4" />
+                          </button>
+                        </div>
+
+                        <div className="text-[11px] text-slate-500 space-y-1">
+                          <div className="flex justify-between">
+                            <span>Tipo de Acesso:</span>
+                            <strong className="text-sky-700">Só de Leitura (Sem Escrita)</strong>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Data de Registo:</span>
+                            <span>{leitor.dataCriacao || 'Recente'}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Ações do Administrador */}
+                      {!isReadOnly && (
+                        <div className="bg-slate-50 px-5 py-3 border-t border-slate-100 flex items-center justify-between text-xs">
+                          <button
+                            type="button"
+                            onClick={() => toggleLeitorStatus(leitor.id)}
+                            className="text-slate-600 hover:text-slate-900 font-semibold cursor-pointer"
+                          >
+                            {leitor.ativo ? 'Desativar Acesso' : 'Ativar Acesso'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (window.confirm(`Deseja eliminar o utilizador de leitura "${leitor.nome}"?`)) {
+                                await deleteLeitor(leitor.id);
+                              }
+                            }}
+                            className="text-slate-400 hover:text-red-600 p-1.5 rounded hover:bg-white transition cursor-pointer"
+                            title="Eliminar utilizador de leitura"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ============================================================== */}
+          {/* TAB 4: RELATÓRIOS & FICHAS */}
           {/* ============================================================== */}
           {activeTab === 'relatorios' && (
             <div className="space-y-6">
@@ -1218,13 +2469,15 @@ export const AdminView: React.FC = () => {
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setActiveScreen('formulario')}
-                      className="bg-[#2667ff] hover:bg-[#1a53db] text-white font-semibold px-3 py-2 rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
-                    >
-                      <Plus className="w-4 h-4" />
-                      <span>Preencher Ficha</span>
-                    </button>
+                    {!isReadOnly && (
+                      <button
+                        onClick={() => setActiveScreen('formulario')}
+                        className="bg-[#2667ff] hover:bg-[#1a53db] text-white font-semibold px-3 py-2 rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>Preencher Ficha</span>
+                      </button>
+                    )}
                     <button
                       onClick={exportToCSV}
                       className="bg-emerald-700 hover:bg-emerald-800 text-white font-semibold px-3 py-2 rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition"
@@ -1351,26 +2604,40 @@ export const AdminView: React.FC = () => {
                                 {sub.totalNao}
                               </td>
                               <td className="py-3 px-4">
-                                <select
-                                  value={sub.status}
-                                  onChange={(e) =>
-                                    updateSubmissaoStatus(
-                                      sub.id,
-                                      e.target.value as 'Validado' | 'Pendente' | 'Em Revisão'
-                                    )
-                                  }
-                                  className={`text-xs font-bold py-1 px-2 rounded border ${
-                                    sub.status === 'Validado'
-                                      ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                                      : sub.status === 'Pendente'
-                                      ? 'bg-amber-50 text-amber-800 border-amber-200'
-                                      : 'bg-blue-50 text-blue-800 border-blue-200'
-                                  }`}
-                                >
-                                  <option value="Validado">Validado</option>
-                                  <option value="Pendente">Pendente</option>
-                                  <option value="Em Revisão">Em Revisão</option>
-                                </select>
+                                {!isReadOnly ? (
+                                  <select
+                                    value={sub.status}
+                                    onChange={(e) =>
+                                      updateSubmissaoStatus(
+                                        sub.id,
+                                        e.target.value as 'Validado' | 'Pendente' | 'Em Revisão'
+                                      )
+                                    }
+                                    className={`text-xs font-bold py-1 px-2 rounded border ${
+                                      sub.status === 'Validado'
+                                        ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                        : sub.status === 'Pendente'
+                                        ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                        : 'bg-blue-50 text-blue-800 border-blue-200'
+                                    }`}
+                                  >
+                                    <option value="Validado">Validado</option>
+                                    <option value="Pendente">Pendente</option>
+                                    <option value="Em Revisão">Em Revisão</option>
+                                  </select>
+                                ) : (
+                                  <span
+                                    className={`badge ${
+                                      sub.status === 'Validado'
+                                        ? 'badge-success'
+                                        : sub.status === 'Pendente'
+                                        ? 'badge-warning'
+                                        : 'badge-info'
+                                    }`}
+                                  >
+                                    {sub.status}
+                                  </span>
+                                )}
                               </td>
                               <td className="py-3 px-4 text-right space-x-2">
                                 <button
@@ -1380,17 +2647,19 @@ export const AdminView: React.FC = () => {
                                   <Eye className="w-3.5 h-3.5" />
                                   <span>Ver Detalhes</span>
                                 </button>
-                                <button
-                                  onClick={() => {
-                                    if (window.confirm('Deseja eliminar esta submissão?')) {
-                                      deleteSubmissao(sub.id);
-                                    }
-                                  }}
-                                  className="text-slate-400 hover:text-red-600 p-1 rounded"
-                                  title="Eliminar submissão"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
+                                {!isReadOnly && (
+                                  <button
+                                    onClick={() => {
+                                      if (window.confirm('Deseja eliminar esta submissão?')) {
+                                        deleteSubmissao(sub.id);
+                                      }
+                                    }}
+                                    className="text-slate-400 hover:text-red-600 p-1 rounded"
+                                    title="Eliminar submissão"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
                               </td>
                             </tr>
                           );
@@ -1754,6 +3023,62 @@ export const AdminView: React.FC = () => {
                 />
               </div>
 
+              {/* PLANEAMENTO DE FICHAS E DIAS DE TRABALHO (+5 DIAS) */}
+              <div className="bg-emerald-50/70 p-3.5 rounded-xl border border-emerald-200 space-y-3">
+                <div className="flex items-center gap-2">
+                  <CalendarDays className="w-4 h-4 text-emerald-700" />
+                  <span className="text-xs font-bold text-emerald-900 uppercase tracking-wide">
+                    Total de Fichas e Dias de Trabalho da Campanha
+                  </span>
+                </div>
+                <div className="text-[11px] text-emerald-800 leading-relaxed">
+                  Adicione o total de fichas atribuídas durante os vários dias de trabalho (serão mais de 5 dias). Isto permitirá ao sistema saber exatamente quantas fichas este supervisor lança por dia e apurar o ritmo de trabalho.
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Total de Fichas Previstas <span className="text-[#2667ff]">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={500}
+                      required
+                      value={newSupTotalFichas}
+                      onChange={(e) => setNewSupTotalFichas(Math.max(1, parseInt(e.target.value) || 1))}
+                      className="w-full text-sm font-bold text-slate-900 bg-white"
+                      placeholder="Ex: 30"
+                    />
+                    <span className="text-[10px] text-slate-500">Fichas ao longo da campanha</span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Dias de Trabalho Previstos <span className="text-[#2667ff]">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={60}
+                      required
+                      value={newSupDiasTrabalho}
+                      onChange={(e) => setNewSupDiasTrabalho(Math.max(1, parseInt(e.target.value) || 1))}
+                      className="w-full text-sm font-bold text-slate-900 bg-white"
+                      placeholder="Ex: 6 (mais de 5 dias)"
+                    />
+                    <span className="text-[10px] text-slate-500">Duração estimada (+5 dias)</span>
+                  </div>
+                </div>
+
+                <div className="bg-white p-2.5 rounded-lg border border-emerald-200 flex items-center justify-between text-xs">
+                  <span className="text-slate-600 font-medium">Meta Diária Calculada:</span>
+                  <span className="font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                    ~{Math.ceil(newSupTotalFichas / (newSupDiasTrabalho || 1))} fichas / dia
+                  </span>
+                </div>
+              </div>
+
               <div className="flex justify-end gap-2 pt-3 border-t border-slate-200 mt-5">
                 <button
                   type="button"
@@ -1767,6 +3092,205 @@ export const AdminView: React.FC = () => {
                   className="px-5 py-2 rounded-lg bg-[#2667ff] hover:bg-[#1a53db] text-white text-sm font-semibold shadow-xs transition cursor-pointer"
                 >
                   Salvar Supervisor no Firebase
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* MODAL: CADASTRAR NOVO UTILIZADOR SÓ DE LEITURA */}
+      {/* ============================================================== */}
+      {showAddLeitorModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-[9999]">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 text-slate-800 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3 mb-4">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-sky-100 text-[#1a53db] flex items-center justify-center font-bold">
+                  <Eye className="w-4 h-4" />
+                </div>
+                <h3 className="font-bold text-slate-900 text-lg">
+                  Cadastrar Utilizador Só de Leitura
+                </h3>
+              </div>
+              <button
+                onClick={() => setShowAddLeitorModal(false)}
+                className="text-slate-400 hover:text-slate-600 text-xl font-bold cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-500 mb-4">
+              Crie uma conta para consulta de dados. Este utilizador acederá ao painel e a todos os relatórios, mas <strong>não poderá fazer alterações ou submeter dados</strong>.
+            </p>
+
+            <form onSubmit={handleCreateLeitor} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Nome do Utilizador <span className="text-[#2667ff]">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: Dr. Fernando Costa"
+                  value={newLeitorNome}
+                  onChange={(e) => setNewLeitorNome(e.target.value)}
+                  className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#2667ff] outline-none"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Cargo / Função de Auditoria
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ex: Auditor Externo, Estatística Municipal, Consulta"
+                  value={newLeitorCargo}
+                  onChange={(e) => setNewLeitorCargo(e.target.value)}
+                  className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#2667ff] outline-none"
+                />
+              </div>
+
+              {/* CÓDIGO DE ACESSO */}
+              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Código de Acesso Exclusivo <span className="text-[#2667ff]">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder={`LEITOR-00${leitores.length + 1}`}
+                  value={newLeitorCodigo}
+                  onChange={(e) => setNewLeitorCodigo(e.target.value)}
+                  className="w-full text-sm font-mono font-bold text-[#1a53db] bg-white py-2 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#2667ff] outline-none uppercase"
+                />
+                <span className="text-[11px] text-slate-400 mt-1 block">
+                  O utilizador introduzirá este código no ecrã inicial para aceder em modo de leitura.
+                </span>
+              </div>
+
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-[11px] text-[#1a53db] flex items-start gap-2">
+                <Shield className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>
+                  O utilizador terá acesso aos gráficos, relatórios e fichas recebidas do Sumbe, sem permissão para apagar ou editar qualquer ficheiro.
+                </span>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-200 mt-5">
+                <button
+                  type="button"
+                  onClick={() => setShowAddLeitorModal(false)}
+                  className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 text-sm font-semibold hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isCreatingLeitor || !newLeitorNome.trim()}
+                  className="px-5 py-2 rounded-lg bg-[#2667ff] hover:bg-[#1a53db] disabled:opacity-50 text-white text-sm font-semibold shadow-xs transition cursor-pointer"
+                >
+                  {isCreatingLeitor ? 'A Gravar...' : 'Salvar Utilizador de Leitura'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* MODAL: AJUSTAR METAS DE FICHAS E DIAS DE TRABALHO (+5 DIAS) */}
+      {/* ============================================================== */}
+      {editingSupTarget && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-[9999]">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 text-slate-800 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3 mb-4">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold">
+                  <CalendarDays className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-base">
+                    Ajustar Total de Fichas e Dias
+                  </h3>
+                  <div className="text-xs text-slate-500 font-medium">
+                    {editingSupTarget.nome} ({editingSupTarget.codigo})
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => setEditingSupTarget(null)}
+                className="text-slate-400 hover:text-slate-600 text-xl font-bold"
+              >
+                &times;
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 mb-4 leading-relaxed">
+              Defina o total de fichas da campanha e a duração estimada em dias de trabalho (serão mais de 5 dias). O sistema atualizará automaticamente a meta diária e o controlo de lançamentos diários.
+            </p>
+
+            <form onSubmit={handleSaveSupTarget} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Total de Fichas Previstas na Campanha
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={500}
+                  required
+                  value={editTotalFichas}
+                  onChange={(e) => setEditTotalFichas(Math.max(1, parseInt(e.target.value) || 1))}
+                  className="w-full text-sm font-bold text-slate-900"
+                />
+                <span className="text-[11px] text-slate-500 mt-1 block">
+                  Total atribuído ao supervisor durante os vários dias de trabalho.
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Quantidade de Dias de Trabalho (Mais de 5 Dias)
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={60}
+                  required
+                  value={editDiasTrabalho}
+                  onChange={(e) => setEditDiasTrabalho(Math.max(1, parseInt(e.target.value) || 1))}
+                  className="w-full text-sm font-bold text-slate-900"
+                />
+                <span className="text-[11px] text-slate-500 mt-1 block">
+                  Ex: 6, 7, 8, 10, 15 dias previstos para a mobilização no Sumbe.
+                </span>
+              </div>
+
+              <div className="p-3 bg-emerald-50 rounded-lg border border-emerald-200 flex items-center justify-between text-xs">
+                <span className="text-emerald-900 font-medium">Nova Meta Diária Calculada:</span>
+                <span className="font-mono font-bold text-emerald-800 bg-white px-2.5 py-1 rounded border border-emerald-300">
+                  ~{Math.ceil(editTotalFichas / (editDiasTrabalho || 1))} fichas / dia
+                </span>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-200 mt-4">
+                <button
+                  type="button"
+                  onClick={() => setEditingSupTarget(null)}
+                  className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 text-xs font-semibold hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingTarget}
+                  className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-xs transition cursor-pointer"
+                >
+                  {isSavingTarget ? 'A Guardar...' : 'Guardar Alterações'}
                 </button>
               </div>
             </form>

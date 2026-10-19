@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { Supervisor, Submissao, UserSession } from '../types';
+import { Supervisor, Submissao, UserSession, UtilizadorLeitura } from '../types';
 import { INITIAL_SUPERVISORES, INITIAL_SUBMISSOES } from '../data/initialData';
 import { db, testConnection, handleFirestoreError, OperationType } from '../firebase/config';
 import {
@@ -17,6 +17,7 @@ import {
 interface AppContextType {
   supervisores: Supervisor[];
   submissoes: Submissao[];
+  leitores: UtilizadorLeitura[];
   userSession: UserSession | null;
   adminCode: string;
   activeScreen: 'formulario' | 'dashboard' | 'historico';
@@ -31,6 +32,10 @@ interface AppContextType {
   addSupervisor: (data: Omit<Supervisor, 'id' | 'dataCriacao'>) => Promise<Supervisor>;
   updateSupervisor: (id: string, data: Partial<Supervisor>) => Promise<void>;
   deleteSupervisor: (id: string) => Promise<void>;
+  addLeitor: (data: Omit<UtilizadorLeitura, 'id' | 'dataCriacao'>) => Promise<UtilizadorLeitura>;
+  updateLeitor: (id: string, data: Partial<UtilizadorLeitura>) => Promise<void>;
+  toggleLeitorStatus: (id: string) => Promise<void>;
+  deleteLeitor: (id: string) => Promise<void>;
   addSubmissao: (sub: Omit<Submissao, 'id' | 'dataEnvio'>) => Promise<Submissao>;
   updateSubmissaoStatus: (id: string, status: 'Validado' | 'Pendente' | 'Em Revisão') => Promise<void>;
   deleteSubmissao: (id: string) => Promise<void>;
@@ -50,6 +55,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Pure Firestore-driven state: Never default to demo data unless explicit!
   const [supervisores, setSupervisores] = useState<Supervisor[]>([]);
   const [submissoes, setSubmissoes] = useState<Submissao[]>([]);
+  const [leitores, setLeitores] = useState<UtilizadorLeitura[]>([]);
   const [adminCode, setAdminCode] = useState<string>(ADMIN_CODE);
   const [isLoadingData, setIsLoadingData] = useState<boolean>(true);
   const [isFirebaseConnected, setIsFirebaseConnected] = useState<boolean>(false);
@@ -99,6 +105,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let unsubscribeSupervisores: (() => void) | undefined;
     let unsubscribeSubmissoes: (() => void) | undefined;
     let unsubscribeConfig: (() => void) | undefined;
+    let unsubscribeLeitores: (() => void) | undefined;
 
     const initFirebase = async () => {
       try {
@@ -176,6 +183,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             handleFirestoreError(error, OperationType.LIST, 'submissoes');
           }
         );
+
+        // Attach Real-time listener for Leitores (Utilizadores Só de Leitura)
+        unsubscribeLeitores = onSnapshot(
+          collection(db, 'leitores'),
+          (snapshot) => {
+            const loaded: UtilizadorLeitura[] = [];
+            snapshot.forEach((docSnap) => {
+              loaded.push(docSnap.data() as UtilizadorLeitura);
+            });
+            setLeitores(loaded);
+          },
+          (error) => {
+            handleFirestoreError(error, OperationType.LIST, 'leitores');
+          }
+        );
       } catch (err) {
         console.warn('Erro ao ligar ao Firebase:', err);
         setIsLoadingData(false);
@@ -188,6 +210,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (unsubscribeSupervisores) unsubscribeSupervisores();
       if (unsubscribeSubmissoes) unsubscribeSubmissoes();
       if (unsubscribeConfig) unsubscribeConfig();
+      if (unsubscribeLeitores) unsubscribeLeitores();
     };
   }, []);
 
@@ -245,7 +268,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: true };
     }
 
-    // Supervisor Login by code only
+    // 2. Utilizador Só de Leitura (Consulta / Auditoria de Dados)
+    const foundLeitor = leitores.find(
+      (l) =>
+        l.codigo.toLowerCase() === trimmedCode.toLowerCase() ||
+        l.nome.toLowerCase() === trimmedCode.toLowerCase()
+    );
+
+    if (foundLeitor) {
+      if (!foundLeitor.ativo) {
+        return {
+          success: false,
+          message: 'Esta conta de utilizador de leitura encontra-se desativada pela administração.',
+        };
+      }
+
+      const leitorSession: UserSession = {
+        tipo: 'leitor',
+        nome: foundLeitor.nome,
+        codigo: foundLeitor.codigo,
+        leitor: foundLeitor,
+      };
+      setUserSession(leitorSession);
+      setActiveScreen('dashboard');
+      return { success: true };
+    }
+
+    // 3. Supervisor Login by code only
     const foundSup = supervisores.find(
       (s) =>
         s.codigo.toLowerCase() === trimmedCode.toLowerCase() ||
@@ -255,7 +304,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!foundSup) {
       return {
         success: false,
-        message: `Código de utilizador não encontrado. Introduza o código fornecido pelo administrador ou use o código de administração (${currentAdminCode}).`,
+        message: 'Código de utilizador não encontrado. Por favor, verifique o código fornecido pela administração.',
       };
     }
 
@@ -363,6 +412,56 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     if (userSession?.supervisor?.id === id) {
+      logout();
+    }
+  };
+
+  // Leitor (Utilizador Só de Leitura) CRUD with Firestore Persistence
+  const addLeitor = async (data: Omit<UtilizadorLeitura, 'id' | 'dataCriacao'>): Promise<UtilizadorLeitura> => {
+    const newId = `leitor-${Date.now()}`;
+    const newLeitor: UtilizadorLeitura = {
+      ...data,
+      id: newId,
+      dataCriacao: new Date().toISOString().split('T')[0],
+    };
+
+    setLeitores((prev) => [newLeitor, ...prev]);
+
+    try {
+      await setDoc(doc(db, 'leitores', newId), newLeitor);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.CREATE, `leitores/${newId}`);
+    }
+
+    return newLeitor;
+  };
+
+  const updateLeitor = async (id: string, data: Partial<UtilizadorLeitura>): Promise<void> => {
+    setLeitores((prev) => prev.map((l) => (l.id === id ? { ...l, ...data } : l)));
+
+    try {
+      await updateDoc(doc(db, 'leitores', id), data);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, `leitores/${id}`);
+    }
+  };
+
+  const toggleLeitorStatus = async (id: string): Promise<void> => {
+    const leitor = leitores.find((l) => l.id === id);
+    if (!leitor) return;
+    await updateLeitor(id, { ativo: !leitor.ativo });
+  };
+
+  const deleteLeitor = async (id: string): Promise<void> => {
+    setLeitores((prev) => prev.filter((l) => l.id !== id));
+
+    try {
+      await deleteDoc(doc(db, 'leitores', id));
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, `leitores/${id}`);
+    }
+
+    if (userSession?.tipo === 'leitor' && userSession?.leitor?.id === id) {
       logout();
     }
   };
@@ -503,6 +602,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       value={{
         supervisores,
         submissoes,
+        leitores,
         userSession,
         adminCode,
         activeScreen,
@@ -517,6 +617,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addSupervisor,
         updateSupervisor,
         deleteSupervisor,
+        addLeitor,
+        updateLeitor,
+        toggleLeitorStatus,
+        deleteLeitor,
         addSubmissao,
         updateSubmissaoStatus,
         deleteSubmissao,

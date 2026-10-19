@@ -5,6 +5,8 @@ import { CheckCircle2, Plus, Minus, Send, AlertTriangle, ArrowRight, Printer, Sp
 
 interface FichaFormState {
   id: string;
+  numeroFicha?: number;
+  diaCampanha?: number;
   comuna: string;
   bairro: string;
   casa_locais: number;
@@ -51,6 +53,7 @@ export const SupervisorView: React.FC = () => {
     : supervisores.find((s) => s.id === selectedAdminSupId) || supervisores[0];
 
   const [dataColeta, setDataColeta] = useState<string>(getTodayString);
+  const [diaCampanha, setDiaCampanha] = useState<number>(1);
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({
     dadosSupervisor: false,
     atividades: false,
@@ -58,6 +61,8 @@ export const SupervisorView: React.FC = () => {
 
   const createBlankFicha = (index: number): FichaFormState => ({
     id: `temp-${Date.now()}-${index}`,
+    numeroFicha: index,
+    diaCampanha: diaCampanha,
     comuna: activeSupervisor?.comuna || 'Sede',
     bairro: '',
     casa_locais: 0,
@@ -179,6 +184,7 @@ export const SupervisorView: React.FC = () => {
       ...f,
       id: `f-${Date.now()}-${idx + 1}`,
       numeroFicha: idx + 1,
+      diaCampanha: diaCampanha,
     }));
 
     let totalPessoas = 0;
@@ -207,6 +213,7 @@ export const SupervisorView: React.FC = () => {
       provincia: activeSupervisor.provincia || 'Cuanza-Sul',
       municipio: activeSupervisor.municipio || 'Sumbe',
       data: dataColeta,
+      diaCampanha: diaCampanha,
       fichas: finalFichas,
       totalPessoas,
       totalLocais,
@@ -311,10 +318,10 @@ export const SupervisorView: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-1">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-1">
                   <div className="form-group">
                     <label>
-                      <span className="required">*</span> Data de Hoje
+                      <span className="required">*</span> Data de Coleta
                     </label>
                     <input
                       type="date"
@@ -326,6 +333,24 @@ export const SupervisorView: React.FC = () => {
                   </div>
 
                   <div className="form-group">
+                    <label>
+                      <span className="required">*</span> Dia de Trabalho da Campanha
+                    </label>
+                    <select
+                      value={diaCampanha}
+                      onChange={(e) => setDiaCampanha(Number(e.target.value))}
+                      className="font-bold text-[#1a53db] bg-white border border-slate-300 rounded px-3 py-2 text-sm"
+                      title="Indique a qual dia de trabalho da mobilização correspondem estas fichas"
+                    >
+                      {Array.from({ length: 15 }, (_, i) => i + 1).map((d) => (
+                        <option key={d} value={d}>
+                          Dia {d} de Trabalho {d === 1 ? '(Início)' : d > 5 ? '(Fase Alargada)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="form-group">
                     <label>Comuna Base de Atuação</label>
                     <div className="flex items-center gap-2 text-sm text-slate-700 bg-white border border-slate-300 rounded px-3 py-2">
                       <MapPin className="w-4 h-4 text-[#2667ff] shrink-0" />
@@ -333,7 +358,7 @@ export const SupervisorView: React.FC = () => {
                         {activeSupervisor?.comuna || 'Sede'}
                       </span>
                       <span className="text-xs text-slate-400">
-                        (Atribuída no cadastro de supervisor)
+                        (Sumbe)
                       </span>
                     </div>
                   </div>

@@ -264,13 +264,20 @@ export const AdminView: React.FC = () => {
 
     const supervisoresCalculados = supervisores.map((sup) => {
       const supSubs = submissoes.filter((s) => s.supervisorId === sup.id);
-      const diasTrabalho = Math.max(1, sup.diasTrabalhoPrevistos || 5);
-      const fichasDiarias = Math.max(
-        1,
-        sup.fichasDiariasPrevistas || Math.ceil((sup.totalFichasPrevistas || 25) / diasTrabalho) || 5
-      );
-      // Lógica de cálculo automatizado exigida: Fichas Diárias × Dias de Trabalho = Total Requerido
-      const totalFichasRequeridas = fichasDiarias * diasTrabalho;
+      const diasTrabalho = Math.max(1, Number(sup.diasTrabalhoPrevistos) || 5);
+
+      // Reconhecer e honrar com precisão as informações reais com que o supervisor foi lançado
+      const totalFichasRequeridas =
+        sup.totalFichasPrevistas !== undefined && Number(sup.totalFichasPrevistas) > 0
+          ? Number(sup.totalFichasPrevistas)
+          : (sup.fichasDiariasPrevistas
+              ? Number(sup.fichasDiariasPrevistas) * diasTrabalho
+              : 25);
+
+      const fichasDiarias =
+        sup.fichasDiariasPrevistas !== undefined && Number(sup.fichasDiariasPrevistas) > 0
+          ? Number(sup.fichasDiariasPrevistas)
+          : Math.max(1, Math.round(totalFichasRequeridas / diasTrabalho));
 
       let fichasLancadas = 0;
       let pessoasMobilizadas = 0;
@@ -865,9 +872,15 @@ export const AdminView: React.FC = () => {
     // 2. Matriz de desempenho por supervisor
     const supervisorMatrix = supervisores.map((sup) => {
       const supSubs = submissoes.filter((s) => s.supervisorId === sup.id);
-      const totalPrevisto = sup.totalFichasPrevistas || 25;
-      const diasPrevistos = sup.diasTrabalhoPrevistos || 5;
-      const metaDiaria = Math.ceil(totalPrevisto / (diasPrevistos || 1));
+      const diasPrevistos = Math.max(1, Number(sup.diasTrabalhoPrevistos) || 5);
+      const totalPrevisto =
+        sup.totalFichasPrevistas !== undefined && Number(sup.totalFichasPrevistas) > 0
+          ? Number(sup.totalFichasPrevistas)
+          : (sup.fichasDiariasPrevistas ? Number(sup.fichasDiariasPrevistas) * diasPrevistos : 25);
+      const metaDiaria =
+        sup.fichasDiariasPrevistas !== undefined && Number(sup.fichasDiariasPrevistas) > 0
+          ? Number(sup.fichasDiariasPrevistas)
+          : Math.max(1, Math.round(totalPrevisto / diasPrevistos));
 
       const fichasPorData: Record<string, number> = {};
       const pessoasPorData: Record<string, number> = {};
@@ -924,10 +937,17 @@ export const AdminView: React.FC = () => {
       const coordSubs = submissoes.filter((s) => supIds.includes(s.supervisorId));
 
       const totalPrevisto =
-        coord.metaFichasTotal ||
-        (assignedSups.length > 0
-          ? assignedSups.reduce((acc, s) => acc + (s.totalFichasPrevistas || 25), 0)
-          : 50);
+        assignedSups.length > 0
+          ? assignedSups.reduce((acc, s) => {
+              const supReal =
+                s.totalFichasPrevistas !== undefined && Number(s.totalFichasPrevistas) > 0
+                  ? Number(s.totalFichasPrevistas)
+                  : (s.fichasDiariasPrevistas && s.diasTrabalhoPrevistos
+                      ? Number(s.fichasDiariasPrevistas) * Number(s.diasTrabalhoPrevistos)
+                      : 25);
+              return acc + supReal;
+            }, 0)
+          : (coord.metaFichasTotal || 50);
 
       const fichasPorData: Record<string, number> = {};
       const pessoasPorData: Record<string, number> = {};
@@ -1243,9 +1263,9 @@ export const AdminView: React.FC = () => {
     const code =
       newSupCodigo.trim() || `SUP-00${supervisores.length + 1}`;
 
-    const fichasDiarias = Math.max(1, Number(newSupFichasDiarias) || 5);
     const diasTrab = Math.max(1, Number(newSupDiasTrabalho) || 5);
-    const totalFichas = fichasDiarias * diasTrab;
+    const totalFichas = Math.max(1, Number(newSupTotalFichas) || (Number(newSupFichasDiarias) * diasTrab) || 25);
+    const fichasDiarias = Math.max(1, Number(newSupFichasDiarias) || Math.round(totalFichas / diasTrab) || 1);
 
     const matchedCoord = coordenacoes.find(
       (c) => c.nome.toLowerCase() === newSupCoordenacao.trim().toLowerCase()
@@ -1281,7 +1301,7 @@ export const AdminView: React.FC = () => {
     setShowAddSupervisorModal(false);
 
     setSupSuccessMsg(
-      `Supervisor "${created.nome}" gravado com sucesso no Firebase!\nCódigo: ${created.codigo} • ${fichasDiarias} fichas/dia × ${diasTrab} dias = ${totalFichas} fichas previstas.`
+      `Supervisor "${created.nome}" gravado com sucesso no Firebase!\nCódigo: ${created.codigo} • ${totalFichas} fichas atribuídas (${fichasDiarias} fichas/dia × ${diasTrab} dias).`
     );
     setTimeout(() => setSupSuccessMsg(''), 7000);
   };
@@ -1296,11 +1316,16 @@ export const AdminView: React.FC = () => {
     setEditSupMunicipio(sup.municipio || 'Sumbe');
     setEditSupComuna(sup.comuna || 'Sede');
     setEditSupCoordenacao(sup.coordenacao || '');
-    const dias = sup.diasTrabalhoPrevistos || 5;
-    const fichasDiarias = sup.fichasDiariasPrevistas || Math.ceil((sup.totalFichasPrevistas || 25) / dias) || 5;
+    const dias = Math.max(1, Number(sup.diasTrabalhoPrevistos) || 5);
+    const totalExato = sup.totalFichasPrevistas !== undefined && Number(sup.totalFichasPrevistas) > 0
+      ? Number(sup.totalFichasPrevistas)
+      : 25;
+    const fichasDiarias = sup.fichasDiariasPrevistas !== undefined && Number(sup.fichasDiariasPrevistas) > 0
+      ? Number(sup.fichasDiariasPrevistas)
+      : Math.max(1, Math.round(totalExato / dias));
     setEditSupDias(dias);
     setEditSupFichasDiarias(fichasDiarias);
-    setEditSupTotalFichasCalculado(fichasDiarias * dias);
+    setEditSupTotalFichasCalculado(totalExato);
     setEditSupAtivo(sup.ativo);
   };
 
@@ -1316,8 +1341,8 @@ export const AdminView: React.FC = () => {
     setIsSavingSupervisorFull(true);
     try {
       const dias = Math.max(1, Number(editSupDias) || 5);
-      const fichasDiarias = Math.max(1, Number(editSupFichasDiarias) || 1);
-      const totalFichas = fichasDiarias * dias;
+      const totalFichas = Math.max(1, Number(editSupTotalFichasCalculado) || (Number(editSupFichasDiarias) * dias) || 25);
+      const fichasDiarias = Math.max(1, Number(editSupFichasDiarias) || Math.round(totalFichas / dias) || 1);
 
       const matchedCoord = coordenacoes.find(
         (c) => c.nome.toLowerCase() === editSupCoordenacao.trim().toLowerCase()
@@ -4446,10 +4471,16 @@ export const AdminView: React.FC = () => {
                           const supSubmissions = submissoes.filter((s) => s.supervisorId === sup.id);
                           const totalSupFichas = supSubmissions.reduce((acc, s) => acc + s.fichas.length, 0);
                           const totalSupPessoas = supSubmissions.reduce((acc, s) => acc + s.totalPessoas, 0);
-                          const dias = sup.diasTrabalhoPrevistos || 5;
-                          const fichasDiarias = sup.fichasDiariasPrevistas || Math.ceil((sup.totalFichasPrevistas || 25) / dias) || 5;
-                          const totalCalculado = fichasDiarias * dias;
-                          const pct = totalCalculado > 0 ? Math.min(100, Math.round((totalSupFichas / totalCalculado) * 100)) : 0;
+                          const dias = Math.max(1, Number(sup.diasTrabalhoPrevistos) || 5);
+                          const totalExatoFichas =
+                            sup.totalFichasPrevistas !== undefined && Number(sup.totalFichasPrevistas) > 0
+                              ? Number(sup.totalFichasPrevistas)
+                              : (sup.fichasDiariasPrevistas ? Number(sup.fichasDiariasPrevistas) * dias : 25);
+                          const fichasDiarias =
+                            sup.fichasDiariasPrevistas !== undefined && Number(sup.fichasDiariasPrevistas) > 0
+                              ? Number(sup.fichasDiariasPrevistas)
+                              : Math.max(1, Math.round(totalExatoFichas / dias));
+                          const pct = totalExatoFichas > 0 ? Math.min(100, Math.round((totalSupFichas / totalExatoFichas) * 100)) : 0;
                           const color = COLORS_9_SUPERVISORES[index % COLORS_9_SUPERVISORES.length];
 
                           return (
@@ -4488,7 +4519,7 @@ export const AdminView: React.FC = () => {
 
                               <td className="py-3 px-4 text-center bg-indigo-50/40">
                                 <div className="font-mono font-bold text-indigo-900 text-sm">
-                                  {totalCalculado} fichas
+                                  {totalExatoFichas} fichas
                                 </div>
                                 <div className="text-[10px] text-indigo-600 font-sans">
                                   ({fichasDiarias} × {dias} dias)
@@ -4497,7 +4528,7 @@ export const AdminView: React.FC = () => {
 
                               <td className="py-3 px-3 text-center">
                                 <div className="font-bold text-slate-800">
-                                  {totalSupFichas} / {totalCalculado}
+                                  {totalSupFichas} / {totalExatoFichas}
                                 </div>
                                 <div className="w-16 bg-slate-200 rounded-full h-1.5 mx-auto mt-1 overflow-hidden">
                                   <div
@@ -4575,10 +4606,16 @@ export const AdminView: React.FC = () => {
                     const totalSupPessoas = supSubmissions.reduce((acc, s) => acc + s.totalPessoas, 0);
                     const color = COLORS_9_SUPERVISORES[index % COLORS_9_SUPERVISORES.length];
 
-                    const dias = sup.diasTrabalhoPrevistos || 5;
-                    const fichasDiarias = sup.fichasDiariasPrevistas || Math.ceil((sup.totalFichasPrevistas || 25) / dias) || 5;
-                    const totalCalculado = fichasDiarias * dias;
-                    const pct = totalCalculado > 0 ? Math.min(100, Math.round((totalSupFichas / totalCalculado) * 100)) : 0;
+                    const dias = Math.max(1, Number(sup.diasTrabalhoPrevistos) || 5);
+                    const totalExatoFichas =
+                      sup.totalFichasPrevistas !== undefined && Number(sup.totalFichasPrevistas) > 0
+                        ? Number(sup.totalFichasPrevistas)
+                        : (sup.fichasDiariasPrevistas ? Number(sup.fichasDiariasPrevistas) * dias : 25);
+                    const fichasDiarias =
+                      sup.fichasDiariasPrevistas !== undefined && Number(sup.fichasDiariasPrevistas) > 0
+                        ? Number(sup.fichasDiariasPrevistas)
+                        : Math.max(1, Math.round(totalExatoFichas / dias));
+                    const pct = totalExatoFichas > 0 ? Math.min(100, Math.round((totalSupFichas / totalExatoFichas) * 100)) : 0;
 
                     return (
                       <div
@@ -4649,7 +4686,7 @@ export const AdminView: React.FC = () => {
                             <div className="bg-[#eff4ff] p-2 rounded border border-[#bfdbfe]">
                               <div className="text-[11px] text-slate-500 font-medium">Fichas Lançadas</div>
                               <div className="text-base font-bold text-[#1a53db]">
-                                {totalSupFichas} / {totalCalculado}
+                                {totalSupFichas} / {totalExatoFichas}
                               </div>
                               <div className="text-[10px] text-[#2667ff] font-semibold">{pct}% cumprido</div>
                             </div>
@@ -4667,10 +4704,10 @@ export const AdminView: React.FC = () => {
                             <div className="flex items-center justify-between font-semibold text-indigo-950 mb-1.5">
                               <span className="flex items-center gap-1.5">
                                 <Calculator className="w-3.5 h-3.5 text-indigo-600" />
-                                <span>Plano de Trabalho:</span>
+                                <span>Informações da Campanha:</span>
                               </span>
                               <span className="font-mono text-indigo-800 bg-white px-2 py-0.5 rounded border border-indigo-200">
-                                {dias} dias de campanha
+                                {dias} dias de trabalho
                               </span>
                             </div>
 
@@ -4686,8 +4723,8 @@ export const AdminView: React.FC = () => {
                               </div>
                               <div className="text-indigo-400 font-bold">=</div>
                               <div className="text-right">
-                                <span className="text-indigo-600 font-semibold block">Total Calculado:</span>
-                                <strong className="text-indigo-900 font-mono text-xs">{totalCalculado} fichas</strong>
+                                <span className="text-indigo-600 font-semibold block">Meta Real Atribuída:</span>
+                                <strong className="text-indigo-900 font-mono text-xs">{totalExatoFichas} fichas</strong>
                               </div>
                             </div>
                           </div>
@@ -6346,6 +6383,30 @@ export const AdminView: React.FC = () => {
                   Adicione o total de fichas atribuídas durante os vários dias de trabalho (serão mais de 5 dias). Isto permitirá ao sistema saber exatamente quantas fichas este supervisor lança por dia e apurar o ritmo de trabalho.
                 </div>
 
+                {/* Campo Principal: Número Exato de Fichas */}
+                <div className="bg-white p-3 rounded-lg border border-emerald-200">
+                  <label className="block text-xs font-bold text-emerald-950 mb-1">
+                    Número Exato de Fichas Atribuídas (Meta Total Real) <span className="text-[#2667ff]">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={500}
+                    required
+                    value={newSupTotalFichas}
+                    onChange={(e) => {
+                      const tot = Math.max(1, parseInt(e.target.value) || 1);
+                      setNewSupTotalFichas(tot);
+                      setNewSupFichasDiarias(Math.max(1, Math.round(tot / (newSupDiasTrabalho || 5))));
+                    }}
+                    className="w-full text-base font-black font-mono text-emerald-900 bg-emerald-50/30 py-2 px-3 border border-emerald-300 rounded-lg outline-none"
+                    placeholder="Ex: 25, 30..."
+                  />
+                  <span className="text-[10px] text-emerald-700 block mt-1 font-medium">
+                    Número exato com que o supervisor será lançado na campanha
+                  </span>
+                </div>
+
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -6391,9 +6452,9 @@ export const AdminView: React.FC = () => {
                 </div>
 
                 <div className="bg-white p-2.5 rounded-lg border border-emerald-200 flex items-center justify-between text-xs">
-                  <span className="text-slate-600 font-medium">Total Calculado da Campanha:</span>
+                  <span className="text-slate-600 font-medium">Total Real Cadastrado:</span>
                   <span className="font-mono font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded border border-emerald-200">
-                    {newSupFichasDiarias * newSupDiasTrabalho} fichas ({newSupFichasDiarias}/dia × {newSupDiasTrabalho} dias)
+                    {newSupTotalFichas} fichas ({newSupFichasDiarias}/dia × {newSupDiasTrabalho} dias)
                   </span>
                 </div>
               </div>
@@ -7522,17 +7583,41 @@ export const AdminView: React.FC = () => {
                 </div>
               </div>
 
-              {/* CARD DE CÁLCULO AUTOMÁTICO DE FICHAS COM BASE NOS DIAS */}
+              {/* CARD DE INFORMAÇÕES REAIS: NÚMERO EXATO DE FICHAS, DIAS E RITMO DIÁRIO */}
               <div className="bg-indigo-50/70 p-4 rounded-xl border border-indigo-200 space-y-3">
                 <div className="flex items-center gap-2">
                   <Calculator className="w-4 h-4 text-indigo-700" />
                   <span className="text-xs font-bold text-indigo-950 uppercase tracking-wide">
-                    Cálculo Automático da Campanha (Fichas Diárias &times; Dias)
+                    Meta Real do Supervisor (Número Exato de Fichas e Dias)
                   </span>
                 </div>
                 <p className="text-[11px] text-indigo-900 leading-relaxed">
-                  Informe quantas fichas este supervisor recolhe por dia e a duração em dias da campanha. O sistema <strong>calcula automaticamente o total de fichas</strong> que ele irá lançar até ao término dos dias.
+                  Defina o <strong>número exato de fichas com que este supervisor foi lançado</strong> na campanha e a duração em dias. O sistema reconhece e preserva este número exato em todos os relatórios e painéis.
                 </p>
+
+                {/* Campo Principal: Número Exato de Fichas */}
+                <div className="bg-white p-3 rounded-lg border border-indigo-200">
+                  <label className="block text-xs font-bold text-indigo-950 mb-1">
+                    Número Exato de Fichas Atribuídas (Meta Real da Campanha) <span className="text-[#2667ff]">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={500}
+                    required
+                    value={editSupTotalFichasCalculado}
+                    onChange={(e) => {
+                      const tot = Math.max(1, parseInt(e.target.value) || 1);
+                      setEditSupTotalFichasCalculado(tot);
+                      setEditSupFichasDiarias(Math.max(1, Math.round(tot / (editSupDias || 5))));
+                    }}
+                    className="w-full text-base font-black font-mono text-indigo-900 bg-indigo-50/30 py-2 px-3 border border-indigo-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                    placeholder="Ex: 25, 30..."
+                  />
+                  <span className="text-[10px] text-indigo-600 block mt-1 font-medium">
+                    Número exato com que o supervisor foi lançado no sistema
+                  </span>
+                </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -7552,7 +7637,7 @@ export const AdminView: React.FC = () => {
                       }}
                       className="w-full text-sm font-bold font-mono text-slate-900 bg-white py-2 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
                     />
-                    <span className="text-[10px] text-slate-500">Número de fichas por dia</span>
+                    <span className="text-[10px] text-slate-500">Ritmo de fichas por dia</span>
                   </div>
 
                   <div>
@@ -7579,14 +7664,14 @@ export const AdminView: React.FC = () => {
                 {/* Banner de Resultado Calculado */}
                 <div className="bg-white p-3 rounded-xl border border-indigo-200 flex items-center justify-between text-xs shadow-2xs">
                   <div>
-                    <span className="text-slate-500 block font-medium">Total Calculado pelo Sistema:</span>
-                    <span className="text-[11px] text-slate-400">
+                    <span className="text-slate-500 block font-medium">Resumo Real da Campanha:</span>
+                    <span className="text-[11px] text-slate-500">
                       {editSupFichasDiarias} fichas/dia &times; {editSupDias} dias de trabalho
                     </span>
                   </div>
                   <div className="text-right">
                     <span className="font-mono font-black text-indigo-900 bg-indigo-50 px-3 py-1.5 rounded-lg border border-indigo-200 text-sm">
-                      = {editSupFichasDiarias * editSupDias} fichas
+                      = {editSupTotalFichasCalculado} fichas reais
                     </span>
                   </div>
                 </div>

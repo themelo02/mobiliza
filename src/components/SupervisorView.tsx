@@ -41,16 +41,23 @@ export const SupervisorView: React.FC = () => {
   const { userSession, supervisores, submissoes, addSubmissao, setActiveScreen } = useApp();
 
   const isSupervisorSession = userSession?.tipo === 'supervisor';
-  const supervisorData = userSession?.supervisor || supervisores[0];
 
-  // If Admin is filling, allow selecting which supervisor or register as Admin
+  // Se Admin estiver a preencher, permitir selecionar o supervisor
   const [selectedAdminSupId, setSelectedAdminSupId] = useState<string>(
-    supervisorData?.id || supervisores[0]?.id || ''
+    userSession?.supervisor?.id || supervisores[0]?.id || ''
   );
 
-  const activeSupervisor = isSupervisorSession
-    ? supervisorData
-    : supervisores.find((s) => s.id === selectedAdminSupId) || supervisores[0];
+  // Obter o supervisor sempre a partir dos dados atualizados em tempo real do sistema
+  const activeSupervisor = useMemo(() => {
+    if (isSupervisorSession) {
+      return (
+        supervisores.find((s) => s.id === userSession?.supervisor?.id || s.codigo === userSession?.codigo) ||
+        userSession?.supervisor ||
+        supervisores[0]
+      );
+    }
+    return supervisores.find((s) => s.id === selectedAdminSupId) || supervisores[0];
+  }, [isSupervisorSession, userSession, supervisores, selectedAdminSupId]);
 
   // Total de fichas que este supervisor já enviou no decorrer de toda a atividade
   const fichasEnviadasAcumuladas = useMemo(() => {
@@ -60,7 +67,23 @@ export const SupervisorView: React.FC = () => {
       .reduce((acc, s) => acc + (s.fichas ? s.fichas.length : 0), 0);
   }, [submissoes, activeSupervisor?.id]);
 
-  const metaFichasSupervisor = activeSupervisor?.totalFichasPrevistas || 25;
+  // Meta real e exata com que o supervisor foi lançado
+  const metaFichasSupervisor = useMemo(() => {
+    if (!activeSupervisor) return 25;
+    if (activeSupervisor.totalFichasPrevistas !== undefined && Number(activeSupervisor.totalFichasPrevistas) > 0) {
+      return Number(activeSupervisor.totalFichasPrevistas);
+    }
+    const dias = Math.max(1, Number(activeSupervisor.diasTrabalhoPrevistos) || 5);
+    const diarias = Number(activeSupervisor.fichasDiariasPrevistas) || 5;
+    return diarias * dias;
+  }, [activeSupervisor]);
+
+  const diasCampanhaSupervisor = Math.max(1, Number(activeSupervisor?.diasTrabalhoPrevistos) || 5);
+  const fichasDiariasSupervisor =
+    activeSupervisor?.fichasDiariasPrevistas !== undefined && Number(activeSupervisor.fichasDiariasPrevistas) > 0
+      ? Number(activeSupervisor.fichasDiariasPrevistas)
+      : Math.max(1, Math.round(metaFichasSupervisor / diasCampanhaSupervisor));
+
   const remessasSupervisor = useMemo(() => {
     if (!activeSupervisor?.id) return 0;
     return submissoes.filter((s) => s.supervisorId === activeSupervisor.id).length;
@@ -289,11 +312,14 @@ export const SupervisorView: React.FC = () => {
 
             <div className="flex items-center gap-3 self-start sm:self-center">
               <div className="bg-white/10 backdrop-blur-md px-3.5 py-2 rounded-xl border border-white/15 text-center">
-                <div className="text-[10px] uppercase font-bold text-blue-200">Meta Geral</div>
+                <div className="text-[10px] uppercase font-bold text-blue-200">Meta Real Atribuída</div>
                 <div className="text-base font-extrabold text-white">
                   {metaFichasSupervisor} fichas
                 </div>
-                <div className="text-[10px] text-emerald-300 font-medium">
+                <div className="text-[10px] text-blue-200/90 font-medium">
+                  {fichasDiariasSupervisor}/dia &bull; {diasCampanhaSupervisor} dias
+                </div>
+                <div className="text-[10px] text-emerald-300 font-bold mt-0.5">
                   {metaFichasSupervisor > 0 ? ((fichasEnviadasAcumuladas / metaFichasSupervisor) * 100).toFixed(0) : 0}% da meta
                 </div>
               </div>

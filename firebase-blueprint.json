@@ -13,10 +13,14 @@
         "municipio": { "type": "string" },
         "comuna": { "type": "string" },
         "coordenacao": { "type": "string" },
+        "coordenacaoId": { "type": "string" },
+        "fichasDiariasPrevistas": { "type": "number" },
+        "totalFichasPrevistas": { "type": "number" },
+        "diasTrabalhoPrevistos": { "type": "number" },
         "ativo": { "type": "boolean" },
         "dataCriacao": { "type": "string" }
       },
-      "required": ["id", "codigo", "nome", "comuna", "coordenacao", "ativo"]
+      "required": ["id", "codigo", "nome", "comuna", "ativo"]
     },
     "Submissao": {
       "title": "Submissao",

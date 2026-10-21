@@ -189,14 +189,68 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         // Attach Real-time listener for Supervisores
         unsubscribeSupervisores = onSnapshot(
           collection(db, 'supervisores'),
-          (snapshot) => {
+          async (snapshot) => {
+            if (snapshot.empty) {
+              // Se a coleção de supervisores no Firestore estiver vazia, inicializa com os 9 supervisores reais do Sumbe
+              try {
+                const batch = writeBatch(db);
+                for (const s of INITIAL_SUPERVISORES) {
+                  batch.set(doc(db, 'supervisores', s.id), s);
+                }
+                await batch.commit();
+              } catch (e) {
+                console.warn('Erro ao inicializar supervisores reais no Firebase:', e);
+              }
+              setSupervisores(INITIAL_SUPERVISORES);
+              setIsLoadingData(false);
+              return;
+            }
+
             const loaded: Supervisor[] = [];
             snapshot.forEach((docSnap) => {
-              loaded.push(docSnap.data() as Supervisor);
+              const data = docSnap.data() as Supervisor;
+              // Reconhecer e preservar as informações reais com que o supervisor foi lançado
+              const dias = Math.max(1, Number(data.diasTrabalhoPrevistos) || 5);
+              const totalFichas =
+                data.totalFichasPrevistas !== undefined && Number(data.totalFichasPrevistas) > 0
+                  ? Number(data.totalFichasPrevistas)
+                  : (data.fichasDiariasPrevistas
+                      ? Number(data.fichasDiariasPrevistas) * dias
+                      : 25);
+              const diarias =
+                data.fichasDiariasPrevistas !== undefined && Number(data.fichasDiariasPrevistas) > 0
+                  ? Number(data.fichasDiariasPrevistas)
+                  : Math.max(1, Math.round(totalFichas / dias));
+
+              loaded.push({
+                ...data,
+                diasTrabalhoPrevistos: dias,
+                fichasDiariasPrevistas: diarias,
+                totalFichasPrevistas: totalFichas,
+              });
             });
-            // ALWAYS update state directly from Firestore snapshot (even if 0 items!)
+
+            // Atualiza estado diretamente do Firestore
             setSupervisores(loaded);
             setIsLoadingData(false);
+
+            // Sincroniza em tempo real a sessão ativa do supervisor para refletir alterações instantaneamente
+            setUserSession((prev) => {
+              if (prev && prev.tipo === 'supervisor' && prev.supervisor) {
+                const live = loaded.find(
+                  (s) => s.id === prev.supervisor?.id || s.codigo === prev.codigo
+                );
+                if (live) {
+                  return {
+                    ...prev,
+                    nome: live.nome,
+                    codigo: live.codigo,
+                    supervisor: live,
+                  };
+                }
+              }
+              return prev;
+            });
           },
           (error) => {
             handleFirestoreError(error, OperationType.LIST, 'supervisores');
@@ -498,7 +552,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const fichasDiarias =
         defaultFichasDiarias !== undefined && defaultFichasDiarias > 0
           ? defaultFichasDiarias
-          : s.fichasDiariasPrevistas || Math.ceil((s.totalFichasPrevistas || 25) / (s.diasTrabalhoPrevistos || 5)) || 5;
+          : (s.fichasDiariasPrevistas || Math.max(1, Math.round((s.totalFichasPrevistas || 25) / (s.diasTrabalhoPrevistos || 5))));
 
       const totalFichasCalculado = fichasDiarias * validDias;
       totalCampanha += totalFichasCalculado;

@@ -56,8 +56,16 @@ import {
   Menu,
   X,
   Network,
-  Briefcase,
   UserPlus,
+  Zap,
+  Calculator,
+  Table,
+  Sliders,
+  Filter,
+  CheckCircle2,
+  AlertCircle,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 
 const COLORS_9_SUPERVISORES = [
@@ -84,6 +92,7 @@ export const AdminView: React.FC = () => {
     addSupervisor,
     updateSupervisor,
     deleteSupervisor,
+    batchUpdateSupervisoresDias,
     addCoordenacao,
     updateCoordenacao,
     deleteCoordenacao,
@@ -117,10 +126,38 @@ export const AdminView: React.FC = () => {
   const [newSupMunicipio, setNewSupMunicipio] = useState('Sumbe');
   const [newSupComuna, setNewSupComuna] = useState('Sede');
   const [newSupCoordenacao, setNewSupCoordenacao] = useState('');
-  const [newSupTotalFichas, setNewSupTotalFichas] = useState<number>(25);
+  const [newSupFichasDiarias, setNewSupFichasDiarias] = useState<number>(5);
   const [newSupDiasTrabalho, setNewSupDiasTrabalho] = useState<number>(5);
+  const [newSupTotalFichas, setNewSupTotalFichas] = useState<number>(25);
 
-  // Edit Supervisor Target Modal State
+  // Modal de Edição Completa do Supervisor (Nome, Código, Telefone, Comuna, Coordenação, Fichas Diárias, Dias)
+  const [editingSupervisorFull, setEditingSupervisorFull] = useState<Supervisor | null>(null);
+  const [editSupNome, setEditSupNome] = useState('');
+  const [editSupCodigo, setEditSupCodigo] = useState('');
+  const [editSupTelefone, setEditSupTelefone] = useState('');
+  const [editSupProvincia, setEditSupProvincia] = useState('Cuanza-Sul');
+  const [editSupMunicipio, setEditSupMunicipio] = useState('Sumbe');
+  const [editSupComuna, setEditSupComuna] = useState('Sede');
+  const [editSupCoordenacao, setEditSupCoordenacao] = useState('');
+  const [editSupFichasDiarias, setEditSupFichasDiarias] = useState<number>(5);
+  const [editSupDias, setEditSupDias] = useState<number>(5);
+  const [editSupTotalFichasCalculado, setEditSupTotalFichasCalculado] = useState<number>(25);
+  const [editSupAtivo, setEditSupAtivo] = useState<boolean>(true);
+  const [isSavingSupervisorFull, setIsSavingSupervisorFull] = useState<boolean>(false);
+  const [supSuccessMsg, setSupSuccessMsg] = useState('');
+
+  // Modal de Configuração Global de Dias da Campanha (Para Todos os Supervisores de Uma Só Vez)
+  const [showBatchDiasModal, setShowBatchDiasModal] = useState<boolean>(false);
+  const [batchDias, setBatchDias] = useState<number>(5);
+  const [batchModoFichas, setBatchModoFichas] = useState<'manter' | 'padrao'>('manter');
+  const [batchFichasPadrao, setBatchFichasPadrao] = useState<number>(5);
+  const [isSavingBatchDias, setIsSavingBatchDias] = useState<boolean>(false);
+  const [batchSuccessMsg, setBatchSuccessMsg] = useState<string>('');
+
+  // Modo de Visualização da Aba de Supervisores (Cartões ou Tabela)
+  const [supervisoresViewMode, setSupervisoresViewMode] = useState<'cards' | 'tabela'>('cards');
+
+  // Edit Supervisor Target Modal State (legado para compatibilidade)
   const [editingSupTarget, setEditingSupTarget] = useState<Supervisor | null>(null);
   const [editTotalFichas, setEditTotalFichas] = useState<number>(25);
   const [editDiasTrabalho, setEditDiasTrabalho] = useState<number>(5);
@@ -192,6 +229,359 @@ export const AdminView: React.FC = () => {
   const [filterSupervisor, setFilterSupervisor] = useState<string>('todos');
   const [filterComuna, setFilterComuna] = useState<string>('todos');
   const [searchTerm, setSearchTerm] = useState('');
+
+  // Estados da Nova Estrutura de Relatórios: 'geral' | 'supervisor' | 'coordenacao'
+  const [relatorioSubView, setRelatorioSubView] = useState<'geral' | 'supervisor' | 'coordenacao'>('geral');
+  const [relatorioSupervisorId, setRelatorioSupervisorId] = useState<string>('todos');
+  const [relatorioCoordenacaoId, setRelatorioCoordenacaoId] = useState<string>('todas');
+  const [relatorioDataFilter, setRelatorioDataFilter] = useState<string>('todas');
+
+  // ==============================================================
+  // CAMADA LÓGICA AUTOMATIZADA (AUTOMATED FICHA PLANNING LOGIC LAYER)
+  // Calcula o total requerido de fichas por supervisor com base nos dias
+  // de trabalho escolhidos e na meta diária de cada supervisor, gerando
+  // resumos consolidados para o painel de administração e relatórios.
+  // ==============================================================
+  const automatedFichaPlanning = useMemo(() => {
+    let totalRequeridoGeral = 0;
+    let totalLancadoGeral = 0;
+    let totalRestanteGeral = 0;
+    let totalPessoasGeral = 0;
+    let totalLocaisGeral = 0;
+    let totalSimGeral = 0;
+    let totalNaoGeral = 0;
+
+    const categoriasTotaisGeral = {
+      casa: { locais: 0, pessoas: 0 },
+      igrejas: { locais: 0, pessoas: 0 },
+      pracas: { locais: 0, pessoas: 0 },
+      paragem: { locais: 0, pessoas: 0 },
+      creches: { locais: 0, pessoas: 0 },
+      escolas: { locais: 0, pessoas: 0 },
+      agua: { locais: 0, pessoas: 0 },
+      outros: { locais: 0, pessoas: 0 },
+    };
+
+    const supervisoresCalculados = supervisores.map((sup) => {
+      const supSubs = submissoes.filter((s) => s.supervisorId === sup.id);
+      const diasTrabalho = Math.max(1, sup.diasTrabalhoPrevistos || 5);
+      const fichasDiarias = Math.max(
+        1,
+        sup.fichasDiariasPrevistas || Math.ceil((sup.totalFichasPrevistas || 25) / diasTrabalho) || 5
+      );
+      // Lógica de cálculo automatizado exigida: Fichas Diárias × Dias de Trabalho = Total Requerido
+      const totalFichasRequeridas = fichasDiarias * diasTrabalho;
+
+      let fichasLancadas = 0;
+      let pessoasMobilizadas = 0;
+      let locaisVisitados = 0;
+      let totalSim = 0;
+      let totalNao = 0;
+
+      const categoriasSupervisor = {
+        casa: { locais: 0, pessoas: 0 },
+        igrejas: { locais: 0, pessoas: 0 },
+        pracas: { locais: 0, pessoas: 0 },
+        paragem: { locais: 0, pessoas: 0 },
+        creches: { locais: 0, pessoas: 0 },
+        escolas: { locais: 0, pessoas: 0 },
+        agua: { locais: 0, pessoas: 0 },
+        outros: { locais: 0, pessoas: 0 },
+      };
+
+      // Fichas individuais exatamente como inseridas no formulário
+      const fichasIndividuais: Array<{
+        submissaoId: string;
+        data: string;
+        diaCampanha: number;
+        status: string;
+        numeroFicha: number;
+        bairro: string;
+        comuna: string;
+        casa_locais: number;
+        casa_pessoas: number;
+        igrejas_locais: number;
+        igrejas_pessoas: number;
+        pracas_locais: number;
+        pracas_pessoas: number;
+        paragem_locais: number;
+        paragem_pessoas: number;
+        creches_locais: number;
+        creches_pessoas: number;
+        escolas_locais: number;
+        escolas_pessoas: number;
+        agua_locais: number;
+        agua_pessoas: number;
+        outros_locais: number;
+        outros_pessoas: number;
+        total_sim: number;
+        total_nao: number;
+        totalLocaisFicha: number;
+        totalPessoasFicha: number;
+      }> = [];
+
+      supSubs.forEach((sub) => {
+        fichasLancadas += sub.fichas ? sub.fichas.length : 0;
+        pessoasMobilizadas += Number(sub.totalSim) || 0;
+        locaisVisitados += Number(sub.totalLocais) || 0;
+        totalSim += Number(sub.totalSim) || 0;
+        totalNao += Number(sub.totalNao) || 0;
+
+        (sub.fichas || []).forEach((f, idx) => {
+          const c_casa_l = Number(f.casa_locais) || 0;
+          const c_casa_p = Number(f.casa_pessoas) || 0;
+          const c_igrejas_l = Number(f.igrejas_locais) || 0;
+          const c_igrejas_p = Number(f.igrejas_pessoas) || 0;
+          const c_pracas_l = Number(f.pracas_locais) || 0;
+          const c_pracas_p = Number(f.pracas_pessoas) || 0;
+          const c_paragem_l = Number(f.paragem_locais) || 0;
+          const c_paragem_p = Number(f.paragem_pessoas) || 0;
+          const c_creches_l = Number(f.creches_locais) || 0;
+          const c_creches_p = Number(f.creches_pessoas) || 0;
+          const c_escolas_l = Number(f.escolas_locais) || 0;
+          const c_escolas_p = Number(f.escolas_pessoas) || 0;
+          const c_agua_l = Number(f.agua_locais) || 0;
+          const c_agua_p = Number(f.agua_pessoas) || 0;
+          const c_outros_l = Number(f.outros_locais) || 0;
+          const c_outros_p = Number(f.outros_pessoas) || 0;
+
+          categoriasSupervisor.casa.locais += c_casa_l;
+          categoriasSupervisor.casa.pessoas += c_casa_p;
+          categoriasSupervisor.igrejas.locais += c_igrejas_l;
+          categoriasSupervisor.igrejas.pessoas += c_igrejas_p;
+          categoriasSupervisor.pracas.locais += c_pracas_l;
+          categoriasSupervisor.pracas.pessoas += c_pracas_p;
+          categoriasSupervisor.paragem.locais += c_paragem_l;
+          categoriasSupervisor.paragem.pessoas += c_paragem_p;
+          categoriasSupervisor.creches.locais += c_creches_l;
+          categoriasSupervisor.creches.pessoas += c_creches_p;
+          categoriasSupervisor.escolas.locais += c_escolas_l;
+          categoriasSupervisor.escolas.pessoas += c_escolas_p;
+          categoriasSupervisor.agua.locais += c_agua_l;
+          categoriasSupervisor.agua.pessoas += c_agua_p;
+          categoriasSupervisor.outros.locais += c_outros_l;
+          categoriasSupervisor.outros.pessoas += c_outros_p;
+
+          categoriasTotaisGeral.casa.locais += c_casa_l;
+          categoriasTotaisGeral.casa.pessoas += c_casa_p;
+          categoriasTotaisGeral.igrejas.locais += c_igrejas_l;
+          categoriasTotaisGeral.igrejas.pessoas += c_igrejas_p;
+          categoriasTotaisGeral.pracas.locais += c_pracas_l;
+          categoriasTotaisGeral.pracas.pessoas += c_pracas_p;
+          categoriasTotaisGeral.paragem.locais += c_paragem_l;
+          categoriasTotaisGeral.paragem.pessoas += c_paragem_p;
+          categoriasTotaisGeral.creches.locais += c_creches_l;
+          categoriasTotaisGeral.creches.pessoas += c_creches_p;
+          categoriasTotaisGeral.escolas.locais += c_escolas_l;
+          categoriasTotaisGeral.escolas.pessoas += c_escolas_p;
+          categoriasTotaisGeral.agua.locais += c_agua_l;
+          categoriasTotaisGeral.agua.pessoas += c_agua_p;
+          categoriasTotaisGeral.outros.locais += c_outros_l;
+          categoriasTotaisGeral.outros.pessoas += c_outros_p;
+
+          const totLocaisFicha =
+            c_casa_l + c_igrejas_l + c_pracas_l + c_paragem_l + c_creches_l + c_escolas_l + c_agua_l + c_outros_l;
+          const fSim = Number(f.total_sim) || 0;
+          const fNao = Number(f.total_nao) || 0;
+
+          fichasIndividuais.push({
+            submissaoId: sub.id,
+            data: sub.data,
+            diaCampanha: f.diaCampanha || sub.diaCampanha || 1,
+            status: sub.status,
+            numeroFicha: f.numeroFicha || idx + 1,
+            bairro: f.bairro || 'Sem Bairro',
+            comuna: f.comuna || sup.comuna || 'Sede',
+            casa_locais: c_casa_l,
+            casa_pessoas: c_casa_p,
+            igrejas_locais: c_igrejas_l,
+            igrejas_pessoas: c_igrejas_p,
+            pracas_locais: c_pracas_l,
+            pracas_pessoas: c_pracas_p,
+            paragem_locais: c_paragem_l,
+            paragem_pessoas: c_paragem_p,
+            creches_locais: c_creches_l,
+            creches_pessoas: c_creches_p,
+            escolas_locais: c_escolas_l,
+            escolas_pessoas: c_escolas_p,
+            agua_locais: c_agua_l,
+            agua_pessoas: c_agua_p,
+            outros_locais: c_outros_l,
+            outros_pessoas: c_outros_p,
+            total_sim: fSim,
+            total_nao: fNao,
+            totalLocaisFicha: totLocaisFicha,
+            totalPessoasFicha: fSim,
+          });
+        });
+      });
+
+      const fichasRestantes = Math.max(0, totalFichasRequeridas - fichasLancadas);
+      const percentualCumprimento =
+        totalFichasRequeridas > 0 ? (fichasLancadas / totalFichasRequeridas) * 100 : 0;
+      const mediaDiariaAtual = diasTrabalho > 0 ? fichasLancadas / diasTrabalho : 0;
+
+      totalRequeridoGeral += totalFichasRequeridas;
+      totalLancadoGeral += fichasLancadas;
+      totalRestanteGeral += fichasRestantes;
+      totalPessoasGeral += pessoasMobilizadas;
+      totalLocaisGeral += locaisVisitados;
+      totalSimGeral += totalSim;
+      totalNaoGeral += totalNao;
+
+      return {
+        supervisor: sup,
+        diasTrabalho,
+        fichasDiarias,
+        totalFichasRequeridas,
+        fichasLancadas,
+        fichasRestantes,
+        pessoasMobilizadas,
+        locaisVisitados,
+        totalSim,
+        totalNao,
+        percentualCumprimento: Number(percentualCumprimento.toFixed(1)),
+        percentualStr: `${percentualCumprimento.toFixed(1)}%`,
+        mediaDiariaAtual: Number(mediaDiariaAtual.toFixed(1)),
+        categorias: categoriasSupervisor,
+        fichasIndividuais,
+      };
+    });
+
+    // Agrupamento por Coordenação
+    const coordenacoesCalculadas = coordenacoes.map((coord) => {
+      const assignedSups = supervisoresCalculados.filter(
+        (sc) =>
+          (coord.supervisorIds && coord.supervisorIds.includes(sc.supervisor.id)) ||
+          sc.supervisor.coordenacaoId === coord.id ||
+          (coord.nome &&
+            sc.supervisor.coordenacao &&
+            sc.supervisor.coordenacao.toLowerCase().trim() === coord.nome.toLowerCase().trim())
+      );
+
+      const totalRequeridoCoord = assignedSups.reduce((acc, s) => acc + s.totalFichasRequeridas, 0);
+      const totalLancadoCoord = assignedSups.reduce((acc, s) => acc + s.fichasLancadas, 0);
+      const totalRestanteCoord = Math.max(0, totalRequeridoCoord - totalLancadoCoord);
+      const totalPessoasCoord = assignedSups.reduce((acc, s) => acc + s.pessoasMobilizadas, 0);
+      const totalLocaisCoord = assignedSups.reduce((acc, s) => acc + s.locaisVisitados, 0);
+      const totalSimCoord = assignedSups.reduce((acc, s) => acc + s.totalSim, 0);
+      const totalNaoCoord = assignedSups.reduce((acc, s) => acc + s.totalNao, 0);
+      const percentualCoord =
+        totalRequeridoCoord > 0 ? (totalLancadoCoord / totalRequeridoCoord) * 100 : 0;
+
+      const categoriasCoord = {
+        casa: { locais: 0, pessoas: 0 },
+        igrejas: { locais: 0, pessoas: 0 },
+        pracas: { locais: 0, pessoas: 0 },
+        paragem: { locais: 0, pessoas: 0 },
+        creches: { locais: 0, pessoas: 0 },
+        escolas: { locais: 0, pessoas: 0 },
+        agua: { locais: 0, pessoas: 0 },
+        outros: { locais: 0, pessoas: 0 },
+      };
+
+      const todasFichasCoord: Array<{
+        submissaoId: string;
+        data: string;
+        diaCampanha: number;
+        status: string;
+        numeroFicha: number;
+        bairro: string;
+        comuna: string;
+        supervisorNome: string;
+        supervisorCodigo: string;
+        casa_locais: number;
+        casa_pessoas: number;
+        igrejas_locais: number;
+        igrejas_pessoas: number;
+        pracas_locais: number;
+        pracas_pessoas: number;
+        paragem_locais: number;
+        paragem_pessoas: number;
+        creches_locais: number;
+        creches_pessoas: number;
+        escolas_locais: number;
+        escolas_pessoas: number;
+        agua_locais: number;
+        agua_pessoas: number;
+        outros_locais: number;
+        outros_pessoas: number;
+        total_sim: number;
+        total_nao: number;
+        totalLocaisFicha: number;
+        totalPessoasFicha: number;
+      }> = [];
+
+      assignedSups.forEach((sc) => {
+        categoriasCoord.casa.locais += sc.categorias.casa.locais;
+        categoriasCoord.casa.pessoas += sc.categorias.casa.pessoas;
+        categoriasCoord.igrejas.locais += sc.categorias.igrejas.locais;
+        categoriasCoord.igrejas.pessoas += sc.categorias.igrejas.pessoas;
+        categoriasCoord.pracas.locais += sc.categorias.pracas.locais;
+        categoriasCoord.pracas.pessoas += sc.categorias.pracas.pessoas;
+        categoriasCoord.paragem.locais += sc.categorias.paragem.locais;
+        categoriasCoord.paragem.pessoas += sc.categorias.paragem.pessoas;
+        categoriasCoord.creches.locais += sc.categorias.creches.locais;
+        categoriasCoord.creches.pessoas += sc.categorias.creches.pessoas;
+        categoriasCoord.escolas.locais += sc.categorias.escolas.locais;
+        categoriasCoord.escolas.pessoas += sc.categorias.escolas.pessoas;
+        categoriasCoord.agua.locais += sc.categorias.agua.locais;
+        categoriasCoord.agua.pessoas += sc.categorias.agua.pessoas;
+        categoriasCoord.outros.locais += sc.categorias.outros.locais;
+        categoriasCoord.outros.pessoas += sc.categorias.outros.pessoas;
+
+        sc.fichasIndividuais.forEach((f) => {
+          todasFichasCoord.push({
+            ...f,
+            supervisorNome: sc.supervisor.nome,
+            supervisorCodigo: sc.supervisor.codigo,
+          });
+        });
+      });
+
+      return {
+        coordenacao: coord,
+        supervisoresVinculados: assignedSups,
+        totalRequeridoCoord,
+        totalLancadoCoord,
+        totalRestanteCoord,
+        totalPessoasCoord,
+        totalLocaisCoord,
+        totalSimCoord,
+        totalNaoCoord,
+        percentualCoord: Number(percentualCoord.toFixed(1)),
+        percentualCoordStr: `${percentualCoord.toFixed(1)}%`,
+        categoriasCoord,
+        todasFichasCoord,
+      };
+    });
+
+    const progressoGeralPct =
+      totalRequeridoGeral > 0 ? (totalLancadoGeral / totalRequeridoGeral) * 100 : 0;
+
+    const mediaDiasCampanha =
+      supervisores.length > 0
+        ? Math.round(
+            supervisores.reduce((acc, s) => acc + (s.diasTrabalhoPrevistos || 5), 0) / supervisores.length
+          )
+        : 5;
+
+    return {
+      supervisoresCalculados,
+      coordenacoesCalculadas,
+      totalRequeridoGeral,
+      totalLancadoGeral,
+      totalRestanteGeral,
+      totalPessoasGeral,
+      totalLocaisGeral,
+      totalSimGeral,
+      totalNaoGeral,
+      categoriasTotaisGeral,
+      progressoGeralPct: Number(progressoGeralPct.toFixed(1)),
+      progressoGeralStr: `${progressoGeralPct.toFixed(1)}%`,
+      mediaDiasCampanha,
+    };
+  }, [supervisores, submissoes, coordenacoes]);
 
   // Recharts Chart Data: Atividades e Locais por Supervisor
   const supervisorChartData = useMemo(() => {
@@ -853,8 +1243,9 @@ export const AdminView: React.FC = () => {
     const code =
       newSupCodigo.trim() || `SUP-00${supervisores.length + 1}`;
 
-    const totalFichas = Math.max(1, Number(newSupTotalFichas) || 25);
+    const fichasDiarias = Math.max(1, Number(newSupFichasDiarias) || 5);
     const diasTrab = Math.max(1, Number(newSupDiasTrabalho) || 5);
+    const totalFichas = fichasDiarias * diasTrab;
 
     const matchedCoord = coordenacoes.find(
       (c) => c.nome.toLowerCase() === newSupCoordenacao.trim().toLowerCase()
@@ -869,6 +1260,7 @@ export const AdminView: React.FC = () => {
       comuna: newSupComuna || 'Sede',
       coordenacao: newSupCoordenacao.trim() || (coordenacoes[0]?.nome || 'Coordenação Sumbe Centro & Litoral'),
       coordenacaoId: matchedCoord?.id,
+      fichasDiariasPrevistas: fichasDiarias,
       totalFichasPrevistas: totalFichas,
       diasTrabalhoPrevistos: diasTrab,
       ativo: true,
@@ -883,13 +1275,105 @@ export const AdminView: React.FC = () => {
     setNewSupCodigo('');
     setNewSupTelefone('');
     setNewSupCoordenacao('');
-    setNewSupTotalFichas(25);
+    setNewSupFichasDiarias(5);
     setNewSupDiasTrabalho(5);
+    setNewSupTotalFichas(25);
     setShowAddSupervisorModal(false);
 
-    alert(
-      `Supervisor "${created.nome}" gravado com sucesso no Firebase!\nCódigo de Acesso: ${created.codigo}\nComuna Base: ${created.comuna}\nCoordenação: ${created.coordenacao}\nMeta: ${totalFichas} fichas em ${diasTrab} dias de trabalho (~${Math.ceil(totalFichas / diasTrab)} fichas/dia)`
+    setSupSuccessMsg(
+      `Supervisor "${created.nome}" gravado com sucesso no Firebase!\nCódigo: ${created.codigo} • ${fichasDiarias} fichas/dia × ${diasTrab} dias = ${totalFichas} fichas previstas.`
     );
+    setTimeout(() => setSupSuccessMsg(''), 7000);
+  };
+
+  // Abrir Modal de Edição Completa do Supervisor
+  const handleOpenEditSupervisorFull = (sup: Supervisor) => {
+    setEditingSupervisorFull(sup);
+    setEditSupNome(sup.nome);
+    setEditSupCodigo(sup.codigo);
+    setEditSupTelefone(sup.telefone || '');
+    setEditSupProvincia(sup.provincia || 'Cuanza-Sul');
+    setEditSupMunicipio(sup.municipio || 'Sumbe');
+    setEditSupComuna(sup.comuna || 'Sede');
+    setEditSupCoordenacao(sup.coordenacao || '');
+    const dias = sup.diasTrabalhoPrevistos || 5;
+    const fichasDiarias = sup.fichasDiariasPrevistas || Math.ceil((sup.totalFichasPrevistas || 25) / dias) || 5;
+    setEditSupDias(dias);
+    setEditSupFichasDiarias(fichasDiarias);
+    setEditSupTotalFichasCalculado(fichasDiarias * dias);
+    setEditSupAtivo(sup.ativo);
+  };
+
+  // Salvar Edição Completa do Supervisor com Recálculo Automático
+  const handleSaveSupervisorFull = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingSupervisorFull) return;
+    if (!editSupNome.trim()) {
+      alert('Por favor insira o nome do supervisor.');
+      return;
+    }
+
+    setIsSavingSupervisorFull(true);
+    try {
+      const dias = Math.max(1, Number(editSupDias) || 5);
+      const fichasDiarias = Math.max(1, Number(editSupFichasDiarias) || 1);
+      const totalFichas = fichasDiarias * dias;
+
+      const matchedCoord = coordenacoes.find(
+        (c) => c.nome.toLowerCase() === editSupCoordenacao.trim().toLowerCase()
+      );
+
+      await updateSupervisor(editingSupervisorFull.id, {
+        nome: editSupNome.trim(),
+        codigo: editSupCodigo.trim() || editingSupervisorFull.codigo,
+        telefone: editSupTelefone.trim() || '+244 923 000 000',
+        provincia: editSupProvincia || 'Cuanza-Sul',
+        municipio: editSupMunicipio || 'Sumbe',
+        comuna: editSupComuna || 'Sede',
+        coordenacao: editSupCoordenacao.trim() || editingSupervisorFull.coordenacao,
+        coordenacaoId: matchedCoord?.id || editingSupervisorFull.coordenacaoId,
+        fichasDiariasPrevistas: fichasDiarias,
+        diasTrabalhoPrevistos: dias,
+        totalFichasPrevistas: totalFichas,
+        ativo: editSupAtivo,
+      });
+
+      // Se a coordenação mudou e tem vaga, vincular
+      if (matchedCoord && !matchedCoord.supervisorIds.includes(editingSupervisorFull.id) && matchedCoord.supervisorIds.length < 2) {
+        await assignSupervisorToCoordenacao(matchedCoord.id, editingSupervisorFull.id);
+      }
+
+      setSupSuccessMsg(
+        `Dados do supervisor "${editSupNome.trim()}" atualizados com sucesso no Firebase! Meta: ${totalFichas} fichas (${fichasDiarias} fichas/dia × ${dias} dias de trabalho).`
+      );
+      setTimeout(() => setSupSuccessMsg(''), 7000);
+      setEditingSupervisorFull(null);
+    } catch {
+      alert('Erro ao atualizar supervisor no Firebase.');
+    } finally {
+      setIsSavingSupervisorFull(false);
+    }
+  };
+
+  // Aplicar Dias de Trabalho para Todos os Supervisores de Uma Só Vez (Lote Único)
+  const handleApplyBatchDias = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const dias = Math.max(1, Number(batchDias) || 5);
+    const defaultFichas = batchModoFichas === 'padrao' ? Math.max(1, Number(batchFichasPadrao) || 5) : undefined;
+
+    setIsSavingBatchDias(true);
+    try {
+      const res = await batchUpdateSupervisoresDias(dias, defaultFichas);
+      setBatchSuccessMsg(
+        `Configuração global aplicada com sucesso a todos os ${res.count} supervisores! Duração definida para ${dias} dias de trabalho. O sistema recalculou automaticamente as metas: meta total geral da campanha é agora de ${res.totalFichasCampanha} fichas.`
+      );
+      setTimeout(() => setBatchSuccessMsg(''), 8000);
+      setShowBatchDiasModal(false);
+    } catch {
+      alert('Erro ao gravar configuração global no Firebase.');
+    } finally {
+      setIsSavingBatchDias(false);
+    }
   };
 
   const handleOpenEditTarget = (sup: Supervisor) => {
@@ -909,7 +1393,8 @@ export const AdminView: React.FC = () => {
         totalFichasPrevistas: totalFichas,
         diasTrabalhoPrevistos: diasTrab,
       });
-      alert(`Metas do supervisor "${editingSupTarget.nome}" atualizadas com sucesso: ${totalFichas} fichas em ${diasTrab} dias!`);
+      setSupSuccessMsg(`Metas do supervisor "${editingSupTarget.nome}" atualizadas com sucesso: ${totalFichas} fichas em ${diasTrab} dias!`);
+      setTimeout(() => setSupSuccessMsg(''), 6000);
       setEditingSupTarget(null);
     } catch {
       alert('Erro ao atualizar metas no Firebase.');
@@ -1528,6 +2013,178 @@ export const AdminView: React.FC = () => {
                   <div className="text-[11px] text-slate-500 mt-1.5">
                     {stats.totalSim.toLocaleString('pt-PT')} Sim vs {stats.totalNao.toLocaleString('pt-PT')} Não
                   </div>
+                </div>
+              </div>
+
+              {/* RESUMO DA CAMADA LÓGICA AUTOMATIZADA: TOTAL DE FICHAS REQUERIDAS POR SUPERVISOR */}
+              <div className="bg-white rounded-xl border border-indigo-200 shadow-xs overflow-hidden">
+                <div className="p-4 sm:p-5 bg-gradient-to-r from-indigo-50/80 via-white to-blue-50/50 border-b border-indigo-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold shadow-xs">
+                      <Calculator className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-slate-900 text-base">
+                        Camada Lógica Automatizada &bull; Metas de Fichas por Supervisor
+                      </h4>
+                      <p className="text-xs text-slate-500">
+                        Cálculo automático: <code>Meta Diária ({automatedFichaPlanning.supervisoresCalculados[0]?.fichasDiarias || 5} fichas/dia) × Dias ({automatedFichaPlanning.mediaDiasCampanha} dias) = Total Requerido</code>
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveTab('relatorios');
+                        setRelatorioSubView('supervisor');
+                      }}
+                      className="bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-semibold px-3 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1.5"
+                    >
+                      <Users className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Ver Relatório por Supervisor</span>
+                    </button>
+                    {!isReadOnly && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const commonDias = supervisores[0]?.diasTrabalhoPrevistos || 5;
+                          setBatchDias(commonDias);
+                          setShowBatchDiasModal(true);
+                        }}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                        title="Definir os dias de trabalho da campanha uma única vez para todos os supervisores"
+                      >
+                        <Zap className="w-3.5 h-3.5 text-amber-300" />
+                        <span>Ajustar Dias da Campanha</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Métricas Principais da Camada Lógica */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-4 bg-slate-50/60 border-b border-slate-100">
+                  <div className="bg-white p-3 rounded-lg border border-slate-200">
+                    <span className="text-[11px] font-semibold text-indigo-700 uppercase tracking-wider block">Total Requerido</span>
+                    <div className="text-xl font-black text-indigo-950 mt-0.5">
+                      {automatedFichaPlanning.totalRequeridoGeral} Fichas
+                    </div>
+                    <span className="text-[10px] text-indigo-600">Soma de todos os supervisores</span>
+                  </div>
+
+                  <div className="bg-white p-3 rounded-lg border border-slate-200">
+                    <span className="text-[11px] font-semibold text-[#2667ff] uppercase tracking-wider block">Fichas Lançadas</span>
+                    <div className="text-xl font-black text-[#1a53db] mt-0.5">
+                      {automatedFichaPlanning.totalLancadoGeral} Fichas
+                    </div>
+                    <span className="text-[10px] text-slate-500">{automatedFichaPlanning.progressoGeralStr} cumprido</span>
+                  </div>
+
+                  <div className="bg-white p-3 rounded-lg border border-slate-200">
+                    <span className="text-[11px] font-semibold text-amber-700 uppercase tracking-wider block">Fichas em Falta</span>
+                    <div className="text-xl font-black text-amber-800 mt-0.5">
+                      {automatedFichaPlanning.totalRestanteGeral} Fichas
+                    </div>
+                    <span className="text-[10px] text-amber-600">Para atingir 100% da campanha</span>
+                  </div>
+
+                  <div className="bg-white p-3 rounded-lg border border-slate-200">
+                    <span className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wider block">Pessoas Mobilizadas</span>
+                    <div className="text-xl font-black text-emerald-800 mt-0.5">
+                      {automatedFichaPlanning.totalPessoasGeral.toLocaleString('pt-PT')}
+                    </div>
+                    <span className="text-[10px] text-slate-500">em {automatedFichaPlanning.totalLocaisGeral} locais visitados</span>
+                  </div>
+                </div>
+
+                {/* Barra de Progresso Global */}
+                <div className="p-4 bg-white border-b border-slate-100 space-y-1.5">
+                  <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
+                    <span>Progresso Geral da Campanha no Sumbe</span>
+                    <span className="font-mono text-indigo-700 font-bold">
+                      {automatedFichaPlanning.totalLancadoGeral} de {automatedFichaPlanning.totalRequeridoGeral} fichas ({automatedFichaPlanning.progressoGeralStr})
+                    </span>
+                  </div>
+                  <div className="w-full bg-slate-200 rounded-full h-2.5 overflow-hidden">
+                    <div
+                      className="bg-indigo-600 h-full rounded-full transition-all duration-500"
+                      style={{ width: `${Math.min(100, automatedFichaPlanning.progressoGeralPct)}%` }}
+                    ></div>
+                  </div>
+                </div>
+
+                {/* Tabela Resumo dos 9 Supervisores com Cálculo Automatizado */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-100/80 text-slate-600 font-semibold border-b border-slate-200">
+                      <tr>
+                        <th className="py-2.5 px-4">Supervisor</th>
+                        <th className="py-2.5 px-3">Coordenação</th>
+                        <th className="py-2.5 px-3 text-center">Meta Diária</th>
+                        <th className="py-2.5 px-3 text-center">Dias Escolhidos</th>
+                        <th className="py-2.5 px-3 text-center font-bold text-indigo-900 bg-indigo-50/50">
+                          Total Requerido
+                        </th>
+                        <th className="py-2.5 px-3 text-center">Lançadas</th>
+                        <th className="py-2.5 px-3 text-center text-amber-800">Em Falta</th>
+                        <th className="py-2.5 px-3 text-center">Cumprimento</th>
+                        <th className="py-2.5 px-4 text-right">Ação</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {automatedFichaPlanning.supervisoresCalculados.map((sc) => (
+                        <tr key={sc.supervisor.id} className="hover:bg-slate-50 transition">
+                          <td className="py-2.5 px-4">
+                            <div className="font-bold text-slate-900">{sc.supervisor.nome}</div>
+                            <div className="text-[10px] font-mono text-[#2667ff] font-semibold">{sc.supervisor.codigo}</div>
+                          </td>
+                          <td className="py-2.5 px-3 text-slate-600 text-[11px]">
+                            {sc.supervisor.coordenacao || 'Coordenação Geral'}
+                          </td>
+                          <td className="py-2.5 px-3 text-center font-mono font-bold text-slate-800">
+                            {sc.fichasDiarias}/dia
+                          </td>
+                          <td className="py-2.5 px-3 text-center font-mono text-indigo-700 font-semibold">
+                            {sc.diasTrabalho} dias
+                          </td>
+                          <td className="py-2.5 px-3 text-center font-mono font-black text-indigo-950 bg-indigo-50/30">
+                            {sc.totalFichasRequeridas} fichas
+                          </td>
+                          <td className="py-2.5 px-3 text-center font-bold text-[#1a53db]">
+                            {sc.fichasLancadas}
+                          </td>
+                          <td className="py-2.5 px-3 text-center font-bold text-amber-700">
+                            {sc.fichasRestantes}
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <span className={`inline-block font-mono font-bold text-[11px] px-2 py-0.5 rounded ${
+                              sc.percentualCumprimento >= 100
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : sc.percentualCumprimento >= 50
+                                ? 'bg-blue-100 text-blue-800'
+                                : 'bg-amber-100 text-amber-800'
+                            }`}>
+                              {sc.percentualStr}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-4 text-right">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRelatorioSubView('supervisor');
+                                setRelatorioSupervisorId(sc.supervisor.id);
+                                setActiveTab('relatorios');
+                              }}
+                              className="text-[11px] text-[#2667ff] hover:text-[#1a53db] font-bold hover:underline cursor-pointer"
+                            >
+                              Ver Fichas &rarr;
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
 
@@ -3601,171 +4258,487 @@ export const AdminView: React.FC = () => {
           {/* ============================================================== */}
           {activeTab === 'supervisores' && (
             <div className="space-y-6">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200 shadow-xs">
+              {/* Notificações de Sucesso */}
+              {batchSuccessMsg && (
+                <div className="p-4 bg-blue-50 border border-blue-200 text-blue-900 text-xs font-semibold rounded-xl flex items-center justify-between shadow-xs animate-in fade-in">
+                  <div className="flex items-center gap-2.5">
+                    <Zap className="w-5 h-5 text-[#2667ff] shrink-0" />
+                    <div>{batchSuccessMsg}</div>
+                  </div>
+                  <button onClick={() => setBatchSuccessMsg('')} className="text-blue-700 hover:text-blue-950 font-bold ml-2 cursor-pointer">&times;</button>
+                </div>
+              )}
+
+              {supSuccessMsg && (
+                <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold rounded-xl flex items-center justify-between shadow-xs animate-in fade-in">
+                  <div className="flex items-center gap-2.5">
+                    <CheckCircle className="w-5 h-5 text-emerald-600 shrink-0" />
+                    <div>{supSuccessMsg}</div>
+                  </div>
+                  <button onClick={() => setSupSuccessMsg('')} className="text-emerald-700 hover:text-emerald-950 font-bold ml-2 cursor-pointer">&times;</button>
+                </div>
+              )}
+
+              {/* Cabeçalho da Aba com Ações Globais */}
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200 shadow-xs">
                 <div>
-                  <h3 className="text-lg font-bold text-slate-800">
-                    Os 9 Supervisores Cadastrados no Município do Sumbe
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Cada supervisor acede <strong>apenas com o seu código de utilizador</strong> (sem senha). Ao entrar, o seu Nome, Município e Comuna ficam logo fixados na ficha.
+                  <div className="flex items-center gap-2">
+                    <Users className="w-5 h-5 text-[#2667ff]" />
+                    <h3 className="text-lg font-bold text-slate-800">
+                      Supervisores de Campo ({supervisores.length} Cadastrados)
+                    </h3>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Cada supervisor tem o seu número diário de fichas e total de dias. O sistema <strong>calcula automaticamente</strong> o total de fichas até ao término da campanha.
                   </p>
                 </div>
-                {!isReadOnly && (
-                  <button
-                    onClick={() => setShowAddSupervisorModal(true)}
-                    className="bg-[#2667ff] hover:bg-[#1a53db] text-white font-semibold px-4 py-2.5 rounded-lg text-sm flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
-                  >
-                    <Plus className="w-4 h-4" />
-                    <span>Cadastrar Novo Supervisor</span>
-                  </button>
-                )}
+
+                <div className="flex flex-wrap items-center gap-2.5">
+                  {/* Seletor de Modo de Visualização */}
+                  <div className="bg-slate-100 p-1 rounded-lg border border-slate-200 flex items-center">
+                    <button
+                      type="button"
+                      onClick={() => setSupervisoresViewMode('cards')}
+                      className={`px-3 py-1.5 rounded-md text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 ${
+                        supervisoresViewMode === 'cards'
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                      title="Ver em Cartões"
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                      <span>Cartões</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSupervisoresViewMode('tabela')}
+                      className={`px-3 py-1.5 rounded-md text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 ${
+                        supervisoresViewMode === 'tabela'
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                      title="Ver em Tabela Comparativa"
+                    >
+                      <Table className="w-3.5 h-3.5" />
+                      <span>Tabela Geral</span>
+                    </button>
+                  </div>
+
+                  {!isReadOnly && (
+                    <>
+                      {/* Botão de Destaque: Configurar Dias para Todos de Uma Só Vez */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const commonDias = supervisores[0]?.diasTrabalhoPrevistos || 5;
+                          setBatchDias(commonDias);
+                          setShowBatchDiasModal(true);
+                        }}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg text-xs flex items-center gap-2 shadow-xs transition cursor-pointer"
+                        title="Definir os dias de trabalho da campanha uma única vez para todos os supervisores"
+                      >
+                        <Zap className="w-4 h-4 text-amber-300" />
+                        <span>Definir Dias da Campanha para Todos</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowAddSupervisorModal(true)}
+                        className="bg-[#2667ff] hover:bg-[#1a53db] text-white font-semibold px-4 py-2 rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>Novo Supervisor</span>
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
 
-              {/* Grid dos 9 Supervisores */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                {supervisores.map((sup, index) => {
-                  const supSubmissions = submissoes.filter((s) => s.supervisorId === sup.id);
-                  const totalSupPessoas = supSubmissions.reduce((acc, s) => acc + s.totalPessoas, 0);
-                  const color = COLORS_9_SUPERVISORES[index % COLORS_9_SUPERVISORES.length];
+              {/* Barra de Resumo de Metas e Fichas Totais Calculadas */}
+              {(() => {
+                const totalFichasCampanha = supervisores.reduce((acc, s) => {
+                  const dias = s.diasTrabalhoPrevistos || 5;
+                  const diarias = s.fichasDiariasPrevistas || Math.ceil((s.totalFichasPrevistas || 25) / dias) || 5;
+                  return acc + (diarias * dias);
+                }, 0);
+                const totalLancadasGeral = submissoes.reduce((acc, s) => acc + s.fichas.length, 0);
+                const totalPessoasGeral = submissoes.reduce((acc, s) => acc + s.totalPessoas, 0);
+                const diasComuns = supervisores[0]?.diasTrabalhoPrevistos || 5;
 
-                  return (
-                    <div
-                      key={sup.id}
-                      className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden flex flex-col justify-between hover:border-[#2667ff] transition"
-                    >
-                      <div className="p-5">
-                        <div className="flex items-start justify-between mb-3">
-                          <div className="flex items-center gap-3">
-                            <div
-                              className="w-11 h-11 rounded-full text-white font-bold flex items-center justify-center text-sm shadow-xs"
-                              style={{ backgroundColor: color }}
-                            >
-                              {sup.nome.slice(0, 2).toUpperCase()}
+                return (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 bg-indigo-50/50 p-4 rounded-xl border border-indigo-100">
+                    <div className="bg-white p-3 rounded-lg border border-indigo-100">
+                      <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">Supervisores</span>
+                      <div className="text-xl font-bold text-slate-800 mt-0.5">{supervisores.length} Ativos</div>
+                      <span className="text-[10px] text-slate-400">Todos com acesso sem senha</span>
+                    </div>
+
+                    <div className="bg-white p-3 rounded-lg border border-indigo-100">
+                      <span className="text-[11px] font-semibold text-indigo-700 uppercase tracking-wider block">Duração Padrão</span>
+                      <div className="text-xl font-bold text-indigo-900 mt-0.5">{diasComuns} Dias de Campanha</div>
+                      <span className="text-[10px] text-indigo-600">Aplicado uniformemente</span>
+                    </div>
+
+                    <div className="bg-white p-3 rounded-lg border border-indigo-100">
+                      <span className="text-[11px] font-semibold text-emerald-700 uppercase tracking-wider block">Meta Total Calculada</span>
+                      <div className="text-xl font-bold text-emerald-800 mt-0.5">{totalFichasCampanha} Fichas</div>
+                      <span className="text-[10px] text-emerald-600">Soma de (fichas/dia × dias)</span>
+                    </div>
+
+                    <div className="bg-white p-3 rounded-lg border border-indigo-100">
+                      <span className="text-[11px] font-semibold text-[#2667ff] uppercase tracking-wider block">Progresso Atual</span>
+                      <div className="text-xl font-bold text-[#1a53db] mt-0.5">
+                        {totalLancadasGeral} / {totalFichasCampanha}
+                      </div>
+                      <span className="text-[10px] text-slate-500">{totalPessoasGeral.toLocaleString('pt-PT')} pessoas mobilizadas</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* MODO 1: TABELA GERAL COMPARATIVA DE SUPERVISORES */}
+              {supervisoresViewMode === 'tabela' && (
+                <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+                  <div className="p-4 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+                    <div>
+                      <h4 className="font-bold text-slate-800 text-sm">
+                        Quadro Geral de Supervisores: Fichas Diárias, Dias de Trabalho e Total Calculado
+                      </h4>
+                      <p className="text-xs text-slate-500">
+                        Cada linha exibe o cálculo automático em tempo real: <code>Fichas/Dia × Dias = Total da Campanha</code>
+                      </p>
+                    </div>
+                    {!isReadOnly && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const commonDias = supervisores[0]?.diasTrabalhoPrevistos || 5;
+                          setBatchDias(commonDias);
+                          setShowBatchDiasModal(true);
+                        }}
+                        className="text-xs font-semibold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg border border-indigo-200 transition cursor-pointer flex items-center gap-1.5"
+                      >
+                        <Zap className="w-3.5 h-3.5 text-amber-500" />
+                        <span>Ajustar Dias para Todos</span>
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-slate-100/70 text-slate-700 font-semibold border-b border-slate-200">
+                        <tr>
+                          <th className="py-3 px-4">Supervisor & Código</th>
+                          <th className="py-3 px-3">Coordenação & Área</th>
+                          <th className="py-3 px-3 text-center">Fichas Diárias</th>
+                          <th className="py-3 px-3 text-center">Dias da Campanha</th>
+                          <th className="py-3 px-4 text-center bg-indigo-50/60 font-bold text-indigo-900">
+                            Total Previsto (Calculado)
+                          </th>
+                          <th className="py-3 px-3 text-center">Fichas Lançadas</th>
+                          <th className="py-3 px-3 text-center">Pessoas</th>
+                          <th className="py-3 px-3 text-center">Estado</th>
+                          <th className="py-3 px-4 text-right">Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {supervisores.map((sup, index) => {
+                          const supSubmissions = submissoes.filter((s) => s.supervisorId === sup.id);
+                          const totalSupFichas = supSubmissions.reduce((acc, s) => acc + s.fichas.length, 0);
+                          const totalSupPessoas = supSubmissions.reduce((acc, s) => acc + s.totalPessoas, 0);
+                          const dias = sup.diasTrabalhoPrevistos || 5;
+                          const fichasDiarias = sup.fichasDiariasPrevistas || Math.ceil((sup.totalFichasPrevistas || 25) / dias) || 5;
+                          const totalCalculado = fichasDiarias * dias;
+                          const pct = totalCalculado > 0 ? Math.min(100, Math.round((totalSupFichas / totalCalculado) * 100)) : 0;
+                          const color = COLORS_9_SUPERVISORES[index % COLORS_9_SUPERVISORES.length];
+
+                          return (
+                            <tr key={sup.id} className="hover:bg-slate-50 transition">
+                              <td className="py-3 px-4">
+                                <div className="flex items-center gap-2.5">
+                                  <div
+                                    className="w-7 h-7 rounded-full text-white font-bold flex items-center justify-center text-xs shrink-0"
+                                    style={{ backgroundColor: color }}
+                                  >
+                                    {sup.nome.slice(0, 2).toUpperCase()}
+                                  </div>
+                                  <div>
+                                    <div className="font-bold text-slate-900">{sup.nome}</div>
+                                    <div className="text-[11px] font-mono text-[#2667ff] font-semibold">{sup.codigo}</div>
+                                  </div>
+                                </div>
+                              </td>
+
+                              <td className="py-3 px-3 text-slate-600">
+                                <div className="font-medium text-slate-800">{sup.coordenacao || 'Coordenação Geral'}</div>
+                                <div className="text-[11px] text-slate-400">{sup.municipio || 'Sumbe'} &bull; {sup.comuna || 'Sede'}</div>
+                              </td>
+
+                              <td className="py-3 px-3 text-center">
+                                <span className="font-mono font-bold text-slate-800 bg-slate-100 px-2 py-1 rounded border border-slate-200">
+                                  {fichasDiarias} / dia
+                                </span>
+                              </td>
+
+                              <td className="py-3 px-3 text-center">
+                                <span className="font-mono font-bold text-indigo-700 bg-indigo-50 px-2 py-1 rounded border border-indigo-200">
+                                  {dias} dias
+                                </span>
+                              </td>
+
+                              <td className="py-3 px-4 text-center bg-indigo-50/40">
+                                <div className="font-mono font-bold text-indigo-900 text-sm">
+                                  {totalCalculado} fichas
+                                </div>
+                                <div className="text-[10px] text-indigo-600 font-sans">
+                                  ({fichasDiarias} × {dias} dias)
+                                </div>
+                              </td>
+
+                              <td className="py-3 px-3 text-center">
+                                <div className="font-bold text-slate-800">
+                                  {totalSupFichas} / {totalCalculado}
+                                </div>
+                                <div className="w-16 bg-slate-200 rounded-full h-1.5 mx-auto mt-1 overflow-hidden">
+                                  <div
+                                    className="bg-[#2667ff] h-full rounded-full"
+                                    style={{ width: `${pct}%` }}
+                                  ></div>
+                                </div>
+                              </td>
+
+                              <td className="py-3 px-3 text-center font-bold text-emerald-700">
+                                {totalSupPessoas.toLocaleString('pt-PT')}
+                              </td>
+
+                              <td className="py-3 px-3 text-center">
+                                <span className={`badge ${sup.ativo ? 'badge-success' : 'bg-slate-100 text-slate-500'}`}>
+                                  {sup.ativo ? 'Ativo' : 'Inativo'}
+                                </span>
+                              </td>
+
+                              <td className="py-3 px-4 text-right">
+                                <div className="flex items-center justify-end gap-1.5">
+                                  {!isReadOnly && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenEditSupervisorFull(sup)}
+                                      className="bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 hover:border-indigo-300 px-2.5 py-1 rounded text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
+                                      title="Editar todos os dados (Nome, Código, Fichas Diárias, Dias de Trabalho)"
+                                    >
+                                      <Edit3 className="w-3 h-3 text-indigo-600" />
+                                      <span>Editar</span>
+                                    </button>
+                                  )}
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleTestAsSupervisor(sup)}
+                                    className="bg-white hover:bg-blue-50 text-blue-700 border border-blue-200 px-2 py-1 rounded text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
+                                    title={`Aceder como ${sup.nome}`}
+                                  >
+                                    <UserCheck className="w-3 h-3 text-[#2667ff]" />
+                                    <span>Entrar</span>
+                                  </button>
+
+                                  {!isReadOnly && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (window.confirm(`Deseja remover o supervisor ${sup.nome}?`)) {
+                                          deleteSupervisor(sup.id);
+                                        }
+                                      }}
+                                      className="text-slate-400 hover:text-red-600 p-1 rounded hover:bg-slate-100 transition cursor-pointer"
+                                      title="Eliminar supervisor"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* MODO 2: GRID DE CARTÕES DOS SUPERVISORES */}
+              {supervisoresViewMode === 'cards' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                  {supervisores.map((sup, index) => {
+                    const supSubmissions = submissoes.filter((s) => s.supervisorId === sup.id);
+                    const totalSupFichas = supSubmissions.reduce((acc, s) => acc + s.fichas.length, 0);
+                    const totalSupPessoas = supSubmissions.reduce((acc, s) => acc + s.totalPessoas, 0);
+                    const color = COLORS_9_SUPERVISORES[index % COLORS_9_SUPERVISORES.length];
+
+                    const dias = sup.diasTrabalhoPrevistos || 5;
+                    const fichasDiarias = sup.fichasDiariasPrevistas || Math.ceil((sup.totalFichasPrevistas || 25) / dias) || 5;
+                    const totalCalculado = fichasDiarias * dias;
+                    const pct = totalCalculado > 0 ? Math.min(100, Math.round((totalSupFichas / totalCalculado) * 100)) : 0;
+
+                    return (
+                      <div
+                        key={sup.id}
+                        className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden flex flex-col justify-between hover:border-[#2667ff] transition"
+                      >
+                        <div className="p-5">
+                          <div className="flex items-start justify-between mb-3">
+                            <div className="flex items-center gap-3">
+                              <div
+                                className="w-11 h-11 rounded-full text-white font-bold flex items-center justify-center text-sm shadow-xs"
+                                style={{ backgroundColor: color }}
+                              >
+                                {sup.nome.slice(0, 2).toUpperCase()}
+                              </div>
+                              <div>
+                                <h4 className="font-bold text-slate-900 text-base">{sup.nome}</h4>
+                                <div className="text-xs text-slate-500">
+                                  Comuna: <strong className="text-[#2667ff]">{sup.comuna}</strong>
+                                </div>
+                              </div>
                             </div>
+                            <span
+                              className={`badge ${
+                                sup.ativo ? 'badge-success' : 'bg-slate-100 text-slate-500'
+                              }`}
+                            >
+                              {sup.ativo ? 'Ativo' : 'Inativo'}
+                            </span>
+                          </div>
+
+                          {/* Código de Acesso Único */}
+                          <div className="bg-slate-900 text-white rounded-lg p-3 text-xs mb-3 font-mono flex items-center justify-between">
                             <div>
-                              <h4 className="font-bold text-slate-900 text-base">{sup.nome}</h4>
-                              <div className="text-xs text-slate-500">
-                                Comuna: <strong className="text-[#2667ff]">{sup.comuna}</strong>
+                              <span className="text-slate-400 text-[10px] uppercase font-bold block">
+                                Código de Acesso
+                              </span>
+                              <span className="font-bold text-[#2667ff] text-sm">
+                                {sup.codigo}
+                              </span>
+                            </div>
+                            <span className="text-[10px] text-slate-400 font-sans">
+                              Entra sem senha
+                            </span>
+                          </div>
+
+                          <div className="space-y-1.5 text-xs text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-100">
+                            <div className="flex items-center gap-2">
+                              <Compass className="w-3.5 h-3.5 text-[#2667ff] shrink-0" />
+                              <span>
+                                <strong>Coordenação:</strong> {sup.coordenacao || 'Coordenação Geral'}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Building className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                              <span>
+                                <strong>Município:</strong> {sup.municipio || 'Sumbe'} ({sup.provincia || 'Cuanza-Sul'})
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                              <span>{sup.telefone || 'Sem contacto'}</span>
+                            </div>
+                          </div>
+
+                          {/* Estatísticas de Fichas Lançadas e Pessoas */}
+                          <div className="grid grid-cols-2 gap-2 mt-3 text-center">
+                            <div className="bg-[#eff4ff] p-2 rounded border border-[#bfdbfe]">
+                              <div className="text-[11px] text-slate-500 font-medium">Fichas Lançadas</div>
+                              <div className="text-base font-bold text-[#1a53db]">
+                                {totalSupFichas} / {totalCalculado}
+                              </div>
+                              <div className="text-[10px] text-[#2667ff] font-semibold">{pct}% cumprido</div>
+                            </div>
+                            <div className="bg-emerald-50/70 p-2 rounded border border-emerald-100">
+                              <div className="text-[11px] text-slate-500 font-medium">Pessoas Mobilizadas</div>
+                              <div className="text-base font-bold text-emerald-800">
+                                {totalSupPessoas.toLocaleString('pt-PT')}
+                              </div>
+                              <div className="text-[10px] text-emerald-600 font-semibold">no Sumbe</div>
+                            </div>
+                          </div>
+
+                          {/* Detalhe do Plano de Trabalho com Cálculo Automático */}
+                          <div className="mt-3 p-3 bg-indigo-50/70 rounded-xl border border-indigo-200 text-xs">
+                            <div className="flex items-center justify-between font-semibold text-indigo-950 mb-1.5">
+                              <span className="flex items-center gap-1.5">
+                                <Calculator className="w-3.5 h-3.5 text-indigo-600" />
+                                <span>Plano de Trabalho:</span>
+                              </span>
+                              <span className="font-mono text-indigo-800 bg-white px-2 py-0.5 rounded border border-indigo-200">
+                                {dias} dias de campanha
+                              </span>
+                            </div>
+
+                            <div className="bg-white p-2 rounded-lg border border-indigo-100 flex items-center justify-between text-[11px]">
+                              <div>
+                                <span className="text-slate-500 block">Fichas por Dia:</span>
+                                <strong className="text-slate-800 font-mono text-xs">{fichasDiarias} fichas/dia</strong>
+                              </div>
+                              <div className="text-slate-400 font-bold">&times;</div>
+                              <div>
+                                <span className="text-slate-500 block">Dias:</span>
+                                <strong className="text-slate-800 font-mono text-xs">{dias} dias</strong>
+                              </div>
+                              <div className="text-indigo-400 font-bold">=</div>
+                              <div className="text-right">
+                                <span className="text-indigo-600 font-semibold block">Total Calculado:</span>
+                                <strong className="text-indigo-900 font-mono text-xs">{totalCalculado} fichas</strong>
                               </div>
                             </div>
                           </div>
-                          <span
-                            className={`badge ${
-                              sup.ativo ? 'badge-success' : 'bg-slate-100 text-slate-500'
-                            }`}
-                          >
-                            {sup.ativo ? 'Ativo' : 'Inativo'}
-                          </span>
                         </div>
 
-                        {/* Código de Acesso Único */}
-                        <div className="bg-slate-900 text-white rounded-lg p-3 text-xs mb-3 font-mono flex items-center justify-between">
-                          <div>
-                            <span className="text-slate-400 text-[10px] uppercase font-bold block">
-                              Código de Acesso
-                            </span>
-                            <span className="font-bold text-[#2667ff] text-sm">
-                              {sup.codigo}
-                            </span>
-                          </div>
-                          <span className="text-[10px] text-slate-400 font-sans">
-                            Entra sem senha
-                          </span>
-                        </div>
+                        {/* Ações do Cartão */}
+                        {!isReadOnly ? (
+                          <div className="p-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditSupervisorFull(sup)}
+                              className="flex-1 bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 hover:border-indigo-300 py-1.5 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition cursor-pointer shadow-2xs"
+                              title="Editar Nome, Código, Telefone, Comuna, Fichas Diárias e Dias de Trabalho"
+                            >
+                              <Edit3 className="w-3.5 h-3.5 text-indigo-600" />
+                              <span>Editar Dados</span>
+                            </button>
 
-                        <div className="space-y-1.5 text-xs text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-100">
-                          <div className="flex items-center gap-2">
-                            <Compass className="w-3.5 h-3.5 text-[#2667ff] shrink-0" />
-                            <span>
-                              <strong>Coordenação:</strong> {sup.coordenacao || 'Coordenação Geral'}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Building className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                            <span>
-                              <strong>Município:</strong> {sup.municipio || 'Sumbe'} ({sup.provincia || 'Cuanza-Sul'})
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                            <span>{sup.telefone || 'Sem contacto'}</span>
-                          </div>
-                        </div>
+                            <button
+                              type="button"
+                              onClick={() => handleTestAsSupervisor(sup)}
+                              className="bg-white hover:bg-[#eff4ff] hover:text-[#1a53db] text-slate-700 border border-slate-200 py-1.5 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition cursor-pointer"
+                              title="Entrar com a conta deste supervisor para ver o formulário dele"
+                            >
+                              <UserCheck className="w-3.5 h-3.5 text-[#2667ff]" />
+                              <span>Entrar</span>
+                            </button>
 
-                        {/* Estatísticas do supervisor e Metas Diárias */}
-                        <div className="grid grid-cols-2 gap-2 mt-3 text-center">
-                          <div className="bg-[#eff4ff] p-2 rounded border border-[#bfdbfe]">
-                            <div className="text-[11px] text-slate-500 font-medium">Fichas Lançadas</div>
-                            <div className="text-base font-bold text-[#1a53db]">
-                              {supSubmissions.length}
-                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (window.confirm(`Deseja remover o supervisor ${sup.nome}?`)) {
+                                  deleteSupervisor(sup.id);
+                                }
+                              }}
+                              className="text-slate-400 hover:text-red-600 p-1.5 rounded-lg hover:bg-white transition cursor-pointer"
+                              title="Remover supervisor"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
                           </div>
-                          <div className="bg-emerald-50/70 p-2 rounded border border-emerald-100">
-                            <div className="text-[11px] text-slate-500 font-medium">Pessoas</div>
-                            <div className="text-base font-bold text-emerald-800">
-                              {totalSupPessoas.toLocaleString('pt-PT')}
-                            </div>
+                        ) : (
+                          <div className="p-2.5 bg-slate-50 border-t border-slate-100 text-center text-[11px] text-slate-400 font-medium">
+                            Consulta de Perfil Ativo
                           </div>
-                        </div>
-
-                        {/* Detalhe do Plano de Trabalho (+5 Dias) */}
-                        <div className="mt-2.5 p-2 bg-slate-50 rounded-lg border border-slate-200 text-[11px] flex items-center justify-between">
-                          <div>
-                            <span className="text-slate-500 block">Total Previsto:</span>
-                            <strong className="text-slate-800">{sup.totalFichasPrevistas || 25} fichas</strong> em <strong>{sup.diasTrabalhoPrevistos || 5} dias</strong>
-                          </div>
-                          <div className="text-right">
-                            <span className="text-slate-500 block">Meta Diária:</span>
-                            <span className="font-mono font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
-                              ~{Math.ceil((sup.totalFichasPrevistas || 25) / (sup.diasTrabalhoPrevistos || 5))}/dia
-                            </span>
-                          </div>
-                        </div>
+                        )}
                       </div>
-
-                      {/* Ações */}
-                      {!isReadOnly ? (
-                        <div className="p-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-2">
-                          <button
-                            onClick={() => handleTestAsSupervisor(sup)}
-                            className="flex-1 bg-white hover:bg-[#eff4ff] hover:text-[#1a53db] text-slate-700 border border-slate-200 py-1.5 px-2 rounded text-xs font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer"
-                            title="Entrar com a conta deste supervisor para ver o formulário dele"
-                          >
-                            <UserCheck className="w-3.5 h-3.5 text-[#2667ff]" />
-                            <span>Entrar como {sup.nome.split(' ')[0]}</span>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => handleOpenEditTarget(sup)}
-                            className="bg-white hover:bg-emerald-50 text-emerald-700 border border-emerald-200 hover:border-emerald-300 py-1.5 px-2 rounded text-xs font-semibold flex items-center justify-center gap-1 transition cursor-pointer"
-                            title="Ajustar total de fichas da campanha e dias de trabalho"
-                          >
-                            <Edit3 className="w-3.5 h-3.5 text-emerald-600" />
-                            <span>Metas</span>
-                          </button>
-
-                          <button
-                            onClick={() => {
-                              if (window.confirm(`Deseja remover o supervisor ${sup.nome}?`)) {
-                                deleteSupervisor(sup.id);
-                              }
-                            }}
-                            className="text-slate-400 hover:text-red-600 p-1.5 rounded hover:bg-white transition"
-                            title="Remover supervisor"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="p-2.5 bg-slate-50 border-t border-slate-100 text-center text-[11px] text-slate-400 font-medium">
-                          Consulta de Perfil Ativo
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 
@@ -3943,351 +4916,1053 @@ export const AdminView: React.FC = () => {
           )}
 
           {/* ============================================================== */}
-          {/* TAB 4: RELATÓRIOS & FICHAS */}
+          {/* TAB 4: RELATÓRIOS & FICHAS DE MOBILIZAÇÃO */}
           {/* ============================================================== */}
           {activeTab === 'relatorios' && (
             <div className="space-y-6">
-              {/* Filtros e Ações */}
+              {/* CABEÇALHO DO RELATÓRIO COM NAVEGADOR DE SUB-VISTAS & EXPORTAÇÃO */}
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs space-y-4">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                   <div>
-                    <h3 className="font-bold text-slate-800 text-base">
-                      Base Central de Fichas de Mobilização (Firebase Firestore)
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      Consulte, filtre e exporte os dados enviados pelos 9 supervisores do Sumbe
+                    <div className="flex items-center gap-2">
+                      <FileSpreadsheet className="w-5 h-5 text-[#2667ff]" />
+                      <h3 className="font-bold text-slate-900 text-lg">
+                        Relatório de Fichas de Mobilização Comunitária
+                      </h3>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Visualização detalhada conforme os dados são inseridos na ficha (as 8 categorias com locais e pessoas), separado por Supervisor, por Coordenação e Geral.
                     </p>
                   </div>
-                  <div className="flex items-center gap-2">
+
+                  <div className="flex flex-wrap items-center gap-2">
                     {!isReadOnly && (
                       <button
+                        type="button"
                         onClick={() => setActiveScreen('formulario')}
                         className="bg-[#2667ff] hover:bg-[#1a53db] text-white font-semibold px-3 py-2 rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
                       >
                         <Plus className="w-4 h-4" />
-                        <span>Preencher Ficha</span>
+                        <span>Preencher Nova Ficha</span>
                       </button>
                     )}
                     <button
+                      type="button"
                       onClick={exportToCSV}
-                      className="bg-emerald-700 hover:bg-emerald-800 text-white font-semibold px-3 py-2 rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition"
-                      title="Descarregar ficheiro CSV com todas as fichas e categorias"
+                      className="bg-emerald-700 hover:bg-emerald-800 text-white font-semibold px-3 py-2 rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                      title="Descarregar ficheiro CSV com todas as 8 categorias de locais e pessoas"
                     >
                       <Download className="w-4 h-4" />
                       <span>Exportar CSV</span>
                     </button>
                     <button
+                      type="button"
                       onClick={() => window.print()}
-                      className="bg-slate-700 hover:bg-slate-800 text-white font-semibold px-3 py-2 rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition"
+                      className="bg-slate-700 hover:bg-slate-800 text-white font-semibold px-3 py-2 rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
                     >
                       <Printer className="w-4 h-4" />
-                      <span>Imprimir</span>
+                      <span>Imprimir Relatório</span>
                     </button>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-100">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">
-                      Pesquisar por Bairro ou Supervisor
-                    </label>
-                    <div className="relative">
-                      <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                      <input
-                        type="text"
-                        placeholder="Ex: Kikombo, João Silva..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-full pl-9 pr-3 py-2 text-xs border rounded-lg"
-                      />
-                    </div>
+                {/* BARRA DE NAVEGAÇÃO DAS 3 FORMAS DE VER O RELATÓRIO: GERAL, POR SUP, POR COORDE */}
+                <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                  <div className="inline-flex bg-slate-100 p-1 rounded-xl border border-slate-200">
+                    <button
+                      type="button"
+                      onClick={() => setRelatorioSubView('geral')}
+                      className={`px-3 sm:px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer flex items-center justify-center gap-2 ${
+                        relatorioSubView === 'geral'
+                          ? 'bg-[#2667ff] text-white shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <Layers className="w-4 h-4" />
+                      <span>1. Relatório Geral (Consolidado)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setRelatorioSubView('supervisor')}
+                      className={`px-3 sm:px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer flex items-center justify-center gap-2 ${
+                        relatorioSubView === 'supervisor'
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <Users className="w-4 h-4" />
+                      <span>2. Separado por Supervisor (Por Sup.)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setRelatorioSubView('coordenacao')}
+                      className={`px-3 sm:px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer flex items-center justify-center gap-2 ${
+                        relatorioSubView === 'coordenacao'
+                          ? 'bg-purple-600 text-white shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <Compass className="w-4 h-4" />
+                      <span>3. Separado por Coordenação (Por Coorde.)</span>
+                    </button>
                   </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">
-                      Filtrar por Comuna
-                    </label>
-                    <select
-                      value={filterComuna}
-                      onChange={(e) => setFilterComuna(e.target.value)}
-                      className="w-full py-2 px-3 text-xs border rounded-lg"
-                    >
-                      <option value="todos">Todas as Comunas</option>
-                      {COMUNAS_SUMBE.map((c) => (
-                        <option key={c} value={c}>
-                          Comuna: {c}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">
-                      Filtrar por Supervisor
-                    </label>
-                    <select
-                      value={filterSupervisor}
-                      onChange={(e) => setFilterSupervisor(e.target.value)}
-                      className="w-full py-2 px-3 text-xs border rounded-lg"
-                    >
-                      <option value="todos">Todos os Supervisores</option>
-                      {supervisores.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.nome} ({s.comuna})
-                        </option>
-                      ))}
-                    </select>
+                  {/* Resumo Rápido de Contadores */}
+                  <div className="flex items-center gap-3 text-xs text-slate-600 justify-end">
+                    <span className="bg-slate-100 px-2.5 py-1 rounded-md font-mono">
+                      <strong>{submissoes.length}</strong> envios &bull; <strong>{stats.totalFichas}</strong> fichas
+                    </span>
+                    <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2.5 py-1 rounded-md font-mono font-bold">
+                      {stats.totalPessoas.toLocaleString('pt-PT')} pessoas
+                    </span>
                   </div>
                 </div>
               </div>
 
-              {/* Lista e Tabela de Relatórios Totalmente Responsiva */}
-              <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
-                {/* Visualização em Tabela para Tablets e Computadores */}
-                <div className="hidden sm:block overflow-x-auto">
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-slate-50 text-slate-600 text-xs font-semibold uppercase tracking-wider border-b border-slate-200">
-                      <tr>
-                        <th className="py-3 px-4">Data</th>
-                        <th className="py-3 px-4">Supervisor</th>
-                        <th className="py-3 px-4">Comuna(s)</th>
-                        <th className="py-3 px-4">Bairros Visitados</th>
-                        <th className="py-3 px-4">Fichas</th>
-                        <th className="py-3 px-4">Pessoas (Sim)</th>
-                        <th className="py-3 px-4">Total Não</th>
-                        <th className="py-3 px-4">Status</th>
-                        <th className="py-3 px-4 text-right">Ações</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {filteredSubmissoes.length === 0 ? (
-                        <tr>
-                          <td colSpan={9} className="py-8 text-center text-slate-400 text-sm">
-                            Nenhum relatório encontrado com os filtros selecionados.
-                          </td>
-                        </tr>
-                      ) : (
-                        filteredSubmissoes.map((sub) => {
-                          const comunas = Array.from(new Set(sub.fichas.map((f) => f.comuna))).join(', ');
+              {/* BANNER DA CAMADA LÓGICA AUTOMATIZADA: RESUMO DAS METAS REQUERIDAS */}
+              <div className="bg-gradient-to-r from-indigo-900 via-slate-900 to-blue-950 rounded-xl p-4 sm:p-5 text-white shadow-xs border border-indigo-700/40 space-y-4">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-indigo-500/20 text-indigo-300 border border-indigo-400/30 flex items-center justify-center font-bold shrink-0">
+                      <Calculator className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-bold text-sm sm:text-base text-white">
+                          Camada Lógica Automatizada &bull; Metas da Campanha
+                        </h4>
+                        <span className="text-[10px] bg-indigo-500/30 text-indigo-200 font-mono font-bold px-2 py-0.5 rounded border border-indigo-400/30">
+                          {automatedFichaPlanning.supervisoresCalculados.length} Supervisores
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-300 mt-0.5">
+                        O total requerido é calculado automaticamente pelo sistema: <code>Meta Diária × Dias de Trabalho = Total Requerido</code>.
+                      </p>
+                    </div>
+                  </div>
 
-                          return (
-                            <tr key={sub.id} className="hover:bg-slate-50 transition">
-                              <td className="py-3 px-4 font-mono text-xs text-slate-800 whitespace-nowrap">
-                                {sub.data}
-                              </td>
-                              <td className="py-3 px-4 font-semibold text-slate-900">
-                                {sub.supervisorNome}
-                              </td>
-                              <td className="py-3 px-4 text-xs font-medium text-slate-700">
-                                {comunas || 'Sede'}
-                              </td>
-                              <td className="py-3 px-4 text-xs text-slate-700 max-w-xs">
-                                <div className="flex flex-wrap gap-1">
-                                  {sub.fichas.map((f, i) => (
-                                    <span
-                                      key={i}
-                                      className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded text-[11px] font-medium border border-slate-200"
-                                      title={`Bairro ${f.bairro} (${f.comuna})`}
-                                    >
-                                      {f.bairro}
-                                    </span>
-                                  ))}
-                                </div>
-                              </td>
-                              <td className="py-3 px-4 text-xs font-semibold text-slate-800">
-                                {sub.fichas.length}
-                              </td>
-                              <td className="py-3 px-4 font-bold text-[#2667ff]">
-                                {sub.totalSim.toLocaleString('pt-PT')}
-                              </td>
-                              <td className="py-3 px-4 text-xs text-slate-500">
-                                {sub.totalNao}
-                              </td>
-                              <td className="py-3 px-4">
-                                {!isReadOnly ? (
-                                  <select
-                                    value={sub.status}
-                                    onChange={(e) =>
-                                      updateSubmissaoStatus(
-                                        sub.id,
-                                        e.target.value as 'Validado' | 'Pendente' | 'Em Revisão'
-                                      )
-                                    }
-                                    className={`text-xs font-bold py-1 px-2 rounded border cursor-pointer ${
-                                      sub.status === 'Validado'
-                                        ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                                        : sub.status === 'Pendente'
-                                        ? 'bg-amber-50 text-amber-800 border-amber-200'
-                                        : 'bg-blue-50 text-blue-800 border-blue-200'
-                                    }`}
-                                  >
-                                    <option value="Validado">Validado</option>
-                                    <option value="Pendente">Pendente</option>
-                                    <option value="Em Revisão">Em Revisão</option>
-                                  </select>
-                                ) : (
-                                  <span
-                                    className={`badge ${
-                                      sub.status === 'Validado'
-                                        ? 'badge-success'
-                                        : sub.status === 'Pendente'
-                                        ? 'badge-warning'
-                                        : 'badge-info'
-                                    }`}
-                                  >
-                                    {sub.status}
-                                  </span>
-                                )}
-                              </td>
-                              <td className="py-3 px-4 text-right space-x-2">
-                                <button
-                                  onClick={() => setSelectedSubmission(sub)}
-                                  className="text-xs bg-[#eff4ff] hover:bg-[#dbeafe] text-[#1a53db] font-semibold px-2.5 py-1.5 rounded transition inline-flex items-center gap-1 cursor-pointer"
-                                >
-                                  <Eye className="w-3.5 h-3.5" />
-                                  <span>Ver Detalhes</span>
-                                </button>
-                                {!isReadOnly && (
-                                  <button
-                                    onClick={() => {
-                                      if (window.confirm('Deseja eliminar esta submissão?')) {
-                                        deleteSubmissao(sub.id);
-                                      }
-                                    }}
-                                    className="text-slate-400 hover:text-red-600 p-1 rounded cursor-pointer"
-                                    title="Eliminar submissão"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
+                  {!isReadOnly && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const commonDias = supervisores[0]?.diasTrabalhoPrevistos || 5;
+                        setBatchDias(commonDias);
+                        setShowBatchDiasModal(true);
+                      }}
+                      className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 shadow-xs transition cursor-pointer self-start md:self-auto shrink-0"
+                    >
+                      <Zap className="w-3.5 h-3.5 text-amber-300" />
+                      <span>Alterar Dias para Todos de Uma Vez</span>
+                    </button>
+                  )}
                 </div>
 
-                {/* Visualização em Cartões para Dispositivos Móveis (Zero Corte de Informações) */}
-                <div className="sm:hidden divide-y divide-slate-100">
-                  {filteredSubmissoes.length === 0 ? (
-                    <div className="p-8 text-center text-slate-400 text-xs">
-                      Nenhum relatório encontrado com os filtros selecionados.
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t border-slate-700/60">
+                  <div className="bg-slate-800/70 p-3 rounded-lg border border-slate-700">
+                    <span className="text-[10px] text-indigo-300 uppercase font-bold tracking-wider block">Total Requerido Geral</span>
+                    <div className="text-xl sm:text-2xl font-black text-white mt-0.5">
+                      {automatedFichaPlanning.totalRequeridoGeral} Fichas
                     </div>
-                  ) : (
-                    filteredSubmissoes.map((sub) => {
-                      const comunas = Array.from(new Set(sub.fichas.map((f) => f.comuna))).join(', ');
+                    <span className="text-[10px] text-slate-400">Meta total somando todos</span>
+                  </div>
+
+                  <div className="bg-slate-800/70 p-3 rounded-lg border border-slate-700">
+                    <span className="text-[10px] text-blue-300 uppercase font-bold tracking-wider block">Fichas Lançadas</span>
+                    <div className="text-xl sm:text-2xl font-black text-blue-400 mt-0.5">
+                      {automatedFichaPlanning.totalLancadoGeral} Fichas
+                    </div>
+                    <span className="text-[10px] text-slate-400">{automatedFichaPlanning.progressoGeralStr} cumprido</span>
+                  </div>
+
+                  <div className="bg-slate-800/70 p-3 rounded-lg border border-slate-700">
+                    <span className="text-[10px] text-amber-300 uppercase font-bold tracking-wider block">Fichas Restantes</span>
+                    <div className="text-xl sm:text-2xl font-black text-amber-400 mt-0.5">
+                      {automatedFichaPlanning.totalRestanteGeral} Fichas
+                    </div>
+                    <span className="text-[10px] text-slate-400">Para concluir o objetivo</span>
+                  </div>
+
+                  <div className="bg-slate-800/70 p-3 rounded-lg border border-slate-700">
+                    <span className="text-[10px] text-emerald-300 uppercase font-bold tracking-wider block">Pessoas / Locais</span>
+                    <div className="text-xl sm:text-2xl font-black text-emerald-400 mt-0.5">
+                      {automatedFichaPlanning.totalPessoasGeral.toLocaleString('pt-PT')}
+                    </div>
+                    <span className="text-[10px] text-slate-400">{automatedFichaPlanning.totalLocaisGeral} locais visitados</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* ============================================================== */}
+              {/* SUB-VISTA 1: RELATÓRIO GERAL (CONSOLIDADO MUNICIPAL) */}
+              {/* ============================================================== */}
+              {relatorioSubView === 'geral' && (
+                <div className="space-y-6">
+                  {/* Quadro Consolidado Municipal com as 8 Categorias da Ficha */}
+                  <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                      <div>
+                        <h4 className="font-bold text-slate-900 text-base">
+                          Consolidação Geral Municipal pelas 8 Categorias da Ficha
+                        </h4>
+                        <p className="text-xs text-slate-500">
+                          Total somado de locais visitados e pessoas sensibilizadas em cada categoria conforme preenchido nas fichas
+                        </p>
+                      </div>
+                      <div className="text-xs bg-slate-100 px-3 py-1.5 rounded-lg font-mono font-semibold text-slate-700">
+                        {stats.totalLocais} Locais &bull; {stats.totalPessoas.toLocaleString('pt-PT')} Pessoas
+                      </div>
+                    </div>
+
+                    {/* Grelha das 8 Categorias conforme inseridas */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-1">
+                        <div className="text-[11px] font-bold text-slate-700">1. Casas / Residências</div>
+                        <div className="text-sm font-extrabold text-slate-900">
+                          {automatedFichaPlanning.categoriasTotaisGeral.casa.locais} <span className="text-xs font-normal text-slate-500">locais</span>
+                        </div>
+                        <div className="text-xs font-bold text-[#2667ff]">
+                          {automatedFichaPlanning.categoriasTotaisGeral.casa.pessoas.toLocaleString('pt-PT')} <span className="font-normal text-slate-500">pessoas</span>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-1">
+                        <div className="text-[11px] font-bold text-slate-700">2. Igrejas / Cultos</div>
+                        <div className="text-sm font-extrabold text-slate-900">
+                          {automatedFichaPlanning.categoriasTotaisGeral.igrejas.locais} <span className="text-xs font-normal text-slate-500">locais</span>
+                        </div>
+                        <div className="text-xs font-bold text-[#2667ff]">
+                          {automatedFichaPlanning.categoriasTotaisGeral.igrejas.pessoas.toLocaleString('pt-PT')} <span className="font-normal text-slate-500">pessoas</span>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-1">
+                        <div className="text-[11px] font-bold text-slate-700">3. Mercados / Praças</div>
+                        <div className="text-sm font-extrabold text-slate-900">
+                          {automatedFichaPlanning.categoriasTotaisGeral.pracas.locais} <span className="text-xs font-normal text-slate-500">locais</span>
+                        </div>
+                        <div className="text-xs font-bold text-[#2667ff]">
+                          {automatedFichaPlanning.categoriasTotaisGeral.pracas.pessoas.toLocaleString('pt-PT')} <span className="font-normal text-slate-500">pessoas</span>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-1">
+                        <div className="text-[11px] font-bold text-slate-700">4. Paragens de Táxi</div>
+                        <div className="text-sm font-extrabold text-slate-900">
+                          {automatedFichaPlanning.categoriasTotaisGeral.paragem.locais} <span className="text-xs font-normal text-slate-500">locais</span>
+                        </div>
+                        <div className="text-xs font-bold text-[#2667ff]">
+                          {automatedFichaPlanning.categoriasTotaisGeral.paragem.pessoas.toLocaleString('pt-PT')} <span className="font-normal text-slate-500">pessoas</span>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-1">
+                        <div className="text-[11px] font-bold text-slate-700">5. Creches / Infantários</div>
+                        <div className="text-sm font-extrabold text-slate-900">
+                          {automatedFichaPlanning.categoriasTotaisGeral.creches.locais} <span className="text-xs font-normal text-slate-500">locais</span>
+                        </div>
+                        <div className="text-xs font-bold text-[#2667ff]">
+                          {automatedFichaPlanning.categoriasTotaisGeral.creches.pessoas.toLocaleString('pt-PT')} <span className="font-normal text-slate-500">pessoas</span>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-1">
+                        <div className="text-[11px] font-bold text-slate-700">6. Escolas / Ensino</div>
+                        <div className="text-sm font-extrabold text-slate-900">
+                          {automatedFichaPlanning.categoriasTotaisGeral.escolas.locais} <span className="text-xs font-normal text-slate-500">locais</span>
+                        </div>
+                        <div className="text-xs font-bold text-[#2667ff]">
+                          {automatedFichaPlanning.categoriasTotaisGeral.escolas.pessoas.toLocaleString('pt-PT')} <span className="font-normal text-slate-500">pessoas</span>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-1">
+                        <div className="text-[11px] font-bold text-slate-700">7. Pontos de Água</div>
+                        <div className="text-sm font-extrabold text-slate-900">
+                          {automatedFichaPlanning.categoriasTotaisGeral.agua.locais} <span className="text-xs font-normal text-slate-500">locais</span>
+                        </div>
+                        <div className="text-xs font-bold text-[#2667ff]">
+                          {automatedFichaPlanning.categoriasTotaisGeral.agua.pessoas.toLocaleString('pt-PT')} <span className="font-normal text-slate-500">pessoas</span>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-1">
+                        <div className="text-[11px] font-bold text-slate-700">8. Outros Locais</div>
+                        <div className="text-sm font-extrabold text-slate-900">
+                          {automatedFichaPlanning.categoriasTotaisGeral.outros.locais} <span className="text-xs font-normal text-slate-500">locais</span>
+                        </div>
+                        <div className="text-xs font-bold text-[#2667ff]">
+                          {automatedFichaPlanning.categoriasTotaisGeral.outros.pessoas.toLocaleString('pt-PT')} <span className="font-normal text-slate-500">pessoas</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Balanço de Aceitação Sim vs Não */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+                      <div className="bg-emerald-50/70 p-3 rounded-lg border border-emerald-200 flex items-center justify-between">
+                        <div>
+                          <span className="text-[11px] text-emerald-800 font-semibold uppercase block">Total Sim (Aceitaram)</span>
+                          <div className="text-xl font-bold text-emerald-900">{stats.totalSim.toLocaleString('pt-PT')}</div>
+                        </div>
+                        <span className="badge badge-success text-xs font-bold">{stats.taxaAdesao}% Adesão</span>
+                      </div>
+
+                      <div className="bg-rose-50/70 p-3 rounded-lg border border-rose-200 flex items-center justify-between">
+                        <div>
+                          <span className="text-[11px] text-rose-800 font-semibold uppercase block">Total Não (Recusaram)</span>
+                          <div className="text-xl font-bold text-rose-900">{stats.totalNao.toLocaleString('pt-PT')}</div>
+                        </div>
+                        <span className="bg-rose-100 text-rose-800 border border-rose-300 px-2 py-0.5 rounded text-xs font-bold">
+                          {stats.totalSim + stats.totalNao > 0 ? (100 - stats.taxaAdesao).toFixed(1) : 0}% Recusas
+                        </span>
+                      </div>
+
+                      <div className="bg-blue-50/70 p-3 rounded-lg border border-blue-200 flex items-center justify-between">
+                        <div>
+                          <span className="text-[11px] text-blue-800 font-semibold uppercase block">Total Fichas Lançadas</span>
+                          <div className="text-xl font-bold text-[#1a53db]">{stats.totalFichas}</div>
+                        </div>
+                        <span className="font-mono text-xs font-bold text-[#1a53db]">
+                          {submissoes.length} Submissões
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Filtros da Tabela Geral */}
+                  <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">
+                          Pesquisar por Bairro ou Supervisor
+                        </label>
+                        <div className="relative">
+                          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                          <input
+                            type="text"
+                            placeholder="Ex: Kikombo, João Silva..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            className="w-full pl-9 pr-3 py-2 text-xs border rounded-lg outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">
+                          Filtrar por Comuna
+                        </label>
+                        <select
+                          value={filterComuna}
+                          onChange={(e) => setFilterComuna(e.target.value)}
+                          className="w-full py-2 px-3 text-xs border rounded-lg bg-white"
+                        >
+                          <option value="todos">Todas as Comunas</option>
+                          {COMUNAS_SUMBE.map((c) => (
+                            <option key={c} value={c}>Comuna: {c}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">
+                          Filtrar por Supervisor
+                        </label>
+                        <select
+                          value={filterSupervisor}
+                          onChange={(e) => setFilterSupervisor(e.target.value)}
+                          className="w-full py-2 px-3 text-xs border rounded-lg bg-white"
+                        >
+                          <option value="todos">Todos os Supervisores</option>
+                          {supervisores.map((s) => (
+                            <option key={s.id} value={s.id}>{s.nome} ({s.codigo})</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">
+                          Filtrar por Data
+                        </label>
+                        <select
+                          value={filterDia}
+                          onChange={(e) => setFilterDia(e.target.value)}
+                          className="w-full py-2 px-3 text-xs border rounded-lg bg-white"
+                        >
+                          <option value="todos">Todas as Datas</option>
+                          {dailyAnalytics.sortedDates.map((d) => (
+                            <option key={d} value={d}>
+                              {dailyAnalytics.dateLabels[d]?.label || d}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Tabela Completa de Fichas Gerais */}
+                  <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+                    <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                      <div className="font-bold text-slate-800 text-sm">
+                        Todas as Fichas Enviadas ({filteredSubmissoes.length} Submissões Filtradas)
+                      </div>
+                      <span className="text-xs text-slate-500 font-medium">
+                        Clique em &quot;Ver Detalhes&quot; para abrir a ficha completa
+                      </span>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-100 text-slate-600 font-semibold uppercase tracking-wider border-b border-slate-200">
+                          <tr>
+                            <th className="py-3 px-4">Data / Dia</th>
+                            <th className="py-3 px-4">Supervisor</th>
+                            <th className="py-3 px-3">Comuna</th>
+                            <th className="py-3 px-4">Bairros Visitados</th>
+                            <th className="py-3 px-3 text-center">Fichas</th>
+                            <th className="py-3 px-3 text-center">Locais</th>
+                            <th className="py-3 px-3 text-center font-bold text-[#2667ff]">Sim (Pessoas)</th>
+                            <th className="py-3 px-3 text-center text-slate-500">Não</th>
+                            <th className="py-3 px-3 text-center">Status</th>
+                            <th className="py-3 px-4 text-right">Ações</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {filteredSubmissoes.length === 0 ? (
+                            <tr>
+                              <td colSpan={10} className="py-8 text-center text-slate-400">
+                                Nenhuma ficha encontrada com os filtros selecionados.
+                              </td>
+                            </tr>
+                          ) : (
+                            filteredSubmissoes.map((sub) => {
+                              const comunas = Array.from(new Set(sub.fichas.map((f) => f.comuna))).join(', ');
+                              return (
+                                <tr key={sub.id} className="hover:bg-slate-50 transition">
+                                  <td className="py-3 px-4 font-mono font-medium text-slate-800 whitespace-nowrap">
+                                    <div>{sub.data}</div>
+                                    <div className="text-[10px] text-slate-400">Dia {sub.diaCampanha || 1}</div>
+                                  </td>
+                                  <td className="py-3 px-4 font-semibold text-slate-900">
+                                    {sub.supervisorNome}
+                                  </td>
+                                  <td className="py-3 px-3 text-slate-600">
+                                    {comunas || 'Sede'}
+                                  </td>
+                                  <td className="py-3 px-4 max-w-xs">
+                                    <div className="flex flex-wrap gap-1">
+                                      {sub.fichas.map((f, i) => (
+                                        <span
+                                          key={i}
+                                          className="bg-slate-100 text-slate-800 px-1.5 py-0.5 rounded text-[10px] font-medium border border-slate-200"
+                                        >
+                                          {f.bairro}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </td>
+                                  <td className="py-3 px-3 text-center font-bold font-mono text-slate-800">
+                                    {sub.fichas.length}
+                                  </td>
+                                  <td className="py-3 px-3 text-center font-bold text-slate-700">
+                                    {sub.totalLocais}
+                                  </td>
+                                  <td className="py-3 px-3 text-center font-bold text-[#2667ff]">
+                                    {sub.totalSim.toLocaleString('pt-PT')}
+                                  </td>
+                                  <td className="py-3 px-3 text-center text-slate-500">
+                                    {sub.totalNao}
+                                  </td>
+                                  <td className="py-3 px-3 text-center">
+                                    {!isReadOnly ? (
+                                      <select
+                                        value={sub.status}
+                                        onChange={(e) =>
+                                          updateSubmissaoStatus(
+                                            sub.id,
+                                            e.target.value as 'Validado' | 'Pendente' | 'Em Revisão'
+                                          )
+                                        }
+                                        className={`text-xs font-bold py-1 px-2 rounded border cursor-pointer ${
+                                          sub.status === 'Validado'
+                                            ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                            : sub.status === 'Pendente'
+                                            ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                            : 'bg-blue-50 text-blue-800 border-blue-200'
+                                        }`}
+                                      >
+                                        <option value="Validado">Validado</option>
+                                        <option value="Pendente">Pendente</option>
+                                        <option value="Em Revisão">Em Revisão</option>
+                                      </select>
+                                    ) : (
+                                      <span
+                                        className={`badge ${
+                                          sub.status === 'Validado'
+                                            ? 'badge-success'
+                                            : sub.status === 'Pendente'
+                                            ? 'badge-warning'
+                                            : 'badge-info'
+                                        }`}
+                                      >
+                                        {sub.status}
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="py-3 px-4 text-right">
+                                    <div className="flex items-center justify-end gap-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => setSelectedSubmission(sub)}
+                                        className="text-xs bg-[#eff4ff] hover:bg-[#dbeafe] text-[#1a53db] font-semibold px-2.5 py-1.5 rounded transition inline-flex items-center gap-1 cursor-pointer"
+                                      >
+                                        <Eye className="w-3.5 h-3.5" />
+                                        <span>Detalhes</span>
+                                      </button>
+                                      {!isReadOnly && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            if (window.confirm('Deseja eliminar esta submissão?')) {
+                                              deleteSubmissao(sub.id);
+                                            }
+                                          }}
+                                          className="text-slate-400 hover:text-red-600 p-1 rounded hover:bg-slate-100 transition cursor-pointer"
+                                          title="Eliminar"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ============================================================== */}
+              {/* SUB-VISTA 2: SEPARADO POR SUPERVISOR (POR SUP.) */}
+              {/* ============================================================== */}
+              {relatorioSubView === 'supervisor' && (
+                <div className="space-y-6">
+                  {/* Seletor do Supervisor */}
+                  <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <Users className="w-5 h-5 text-indigo-600" />
+                      <div>
+                        <div className="font-bold text-slate-800 text-sm">
+                          Relatório Individual Separado por Supervisor
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          Exibe cada ficha preenchida pelo supervisor exatamente no formato de inserção (as 8 categorias)
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold text-slate-600">Filtrar Supervisor:</span>
+                      <select
+                        value={relatorioSupervisorId}
+                        onChange={(e) => setRelatorioSupervisorId(e.target.value)}
+                        className="py-1.5 px-3 text-xs border border-slate-300 rounded-lg bg-white font-semibold text-slate-800 outline-none"
+                      >
+                        <option value="todos">Todos os 9 Supervisores</option>
+                        {supervisores.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.nome} ({s.codigo}) &bull; {s.comuna}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Lista de Supervisores Selecionados */}
+                  {automatedFichaPlanning.supervisoresCalculados
+                    .filter((sc) => relatorioSupervisorId === 'todos' || sc.supervisor.id === relatorioSupervisorId)
+                    .map((sc, index) => {
+                      const color = COLORS_9_SUPERVISORES[index % COLORS_9_SUPERVISORES.length];
 
                       return (
-                        <div key={sub.id} className="p-4 space-y-3 hover:bg-slate-50 transition">
-                          <div className="flex items-start justify-between gap-2">
-                            <div>
-                              <div className="font-bold text-slate-900 text-sm">
-                                {sub.supervisorNome}
-                              </div>
-                              <div className="text-[11px] text-slate-500 flex items-center gap-1.5 mt-0.5">
-                                <Calendar className="w-3 h-3 text-[#2667ff]" />
-                                <span className="font-semibold text-slate-700">{sub.data}</span>
-                                <span>&bull;</span>
-                                <span>{comunas || 'Sede'}</span>
-                              </div>
-                            </div>
-                            <span
-                              className={`badge text-[10px] ${
-                                sub.status === 'Validado'
-                                  ? 'badge-success'
-                                  : sub.status === 'Pendente'
-                                  ? 'badge-warning'
-                                  : 'badge-info'
-                              }`}
-                            >
-                              {sub.status}
-                            </span>
-                          </div>
-
-                          {/* Bairros sem corte */}
-                          <div>
-                            <div className="text-[10px] font-bold text-slate-500 uppercase mb-1">
-                              Bairros Visitados ({sub.fichas.length} fichas):
-                            </div>
-                            <div className="flex flex-wrap gap-1">
-                              {sub.fichas.map((f, i) => (
-                                <span
-                                  key={i}
-                                  className="bg-slate-100 text-slate-800 px-2 py-0.5 rounded text-[11px] font-medium border border-slate-200"
+                        <div key={sc.supervisor.id} className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+                          {/* Cabeçalho do Supervisor com Camada Lógica Automatizada */}
+                          <div className="p-5 bg-gradient-to-r from-slate-50 via-white to-indigo-50/40 border-b border-slate-200">
+                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                              <div className="flex items-center gap-3">
+                                <div
+                                  className="w-12 h-12 rounded-full text-white font-bold flex items-center justify-center text-sm shadow-xs shrink-0"
+                                  style={{ backgroundColor: color }}
                                 >
-                                  {f.bairro}
-                                </span>
-                              ))}
+                                  {sc.supervisor.nome.slice(0, 2).toUpperCase()}
+                                </div>
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <h4 className="font-bold text-slate-900 text-lg">{sc.supervisor.nome}</h4>
+                                    <span className="font-mono font-bold text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded border border-indigo-200">
+                                      {sc.supervisor.codigo}
+                                    </span>
+                                    <span className={`badge ${sc.supervisor.ativo ? 'badge-success' : 'bg-slate-100 text-slate-500'}`}>
+                                      {sc.supervisor.ativo ? 'Ativo' : 'Inativo'}
+                                    </span>
+                                  </div>
+                                  <div className="text-xs text-slate-500 flex flex-wrap items-center gap-2 mt-1">
+                                    <span><strong>Coordenação:</strong> {sc.supervisor.coordenacao || 'Coordenação Geral'}</span>
+                                    <span>&bull;</span>
+                                    <span><strong>Comuna:</strong> {sc.supervisor.comuna}</span>
+                                    <span>&bull;</span>
+                                    <span><strong>Contacto:</strong> {sc.supervisor.telefone || 'Sem telefone'}</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Card da Meta Automatizada deste Supervisor */}
+                              <div className="bg-indigo-50/80 p-3 rounded-xl border border-indigo-200 text-xs flex flex-wrap items-center gap-3 self-start md:self-auto">
+                                <div>
+                                  <span className="text-[10px] text-indigo-600 font-bold block uppercase">Cálculo Automatizado</span>
+                                  <strong className="text-indigo-950 font-mono text-sm">
+                                    {sc.fichasDiarias}/dia &times; {sc.diasTrabalho} dias = {sc.totalFichasRequeridas} fichas
+                                  </strong>
+                                </div>
+                                <div className="border-l border-indigo-200 pl-3">
+                                  <span className="text-[10px] text-indigo-600 font-bold block uppercase">Progresso</span>
+                                  <span className="font-bold text-slate-800">
+                                    {sc.fichasLancadas} / {sc.totalFichasRequeridas} ({sc.percentualStr})
+                                  </span>
+                                </div>
+                                <div className="border-l border-indigo-200 pl-3">
+                                  <span className="text-[10px] text-amber-700 font-bold block uppercase">Em Falta</span>
+                                  <span className="font-bold text-amber-800 font-mono">
+                                    {sc.fichasRestantes} fichas
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Somatório das 8 Categorias deste Supervisor */}
+                            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 mt-4 pt-3 border-t border-slate-100">
+                              <div className="bg-white p-2 rounded border border-slate-200 text-center">
+                                <div className="text-[10px] font-semibold text-slate-500 truncate">1. Casas</div>
+                                <div className="font-mono font-bold text-slate-800 text-xs">{sc.categorias.casa.locais} loc.</div>
+                                <div className="text-[10px] font-bold text-[#2667ff]">{sc.categorias.casa.pessoas} pess.</div>
+                              </div>
+
+                              <div className="bg-white p-2 rounded border border-slate-200 text-center">
+                                <div className="text-[10px] font-semibold text-slate-500 truncate">2. Igrejas</div>
+                                <div className="font-mono font-bold text-slate-800 text-xs">{sc.categorias.igrejas.locais} loc.</div>
+                                <div className="text-[10px] font-bold text-[#2667ff]">{sc.categorias.igrejas.pessoas} pess.</div>
+                              </div>
+
+                              <div className="bg-white p-2 rounded border border-slate-200 text-center">
+                                <div className="text-[10px] font-semibold text-slate-500 truncate">3. Praças</div>
+                                <div className="font-mono font-bold text-slate-800 text-xs">{sc.categorias.pracas.locais} loc.</div>
+                                <div className="text-[10px] font-bold text-[#2667ff]">{sc.categorias.pracas.pessoas} pess.</div>
+                              </div>
+
+                              <div className="bg-white p-2 rounded border border-slate-200 text-center">
+                                <div className="text-[10px] font-semibold text-slate-500 truncate">4. Paragens</div>
+                                <div className="font-mono font-bold text-slate-800 text-xs">{sc.categorias.paragem.locais} loc.</div>
+                                <div className="text-[10px] font-bold text-[#2667ff]">{sc.categorias.paragem.pessoas} pess.</div>
+                              </div>
+
+                              <div className="bg-white p-2 rounded border border-slate-200 text-center">
+                                <div className="text-[10px] font-semibold text-slate-500 truncate">5. Creches</div>
+                                <div className="font-mono font-bold text-slate-800 text-xs">{sc.categorias.creches.locais} loc.</div>
+                                <div className="text-[10px] font-bold text-[#2667ff]">{sc.categorias.creches.pessoas} pess.</div>
+                              </div>
+
+                              <div className="bg-white p-2 rounded border border-slate-200 text-center">
+                                <div className="text-[10px] font-semibold text-slate-500 truncate">6. Escolas</div>
+                                <div className="font-mono font-bold text-slate-800 text-xs">{sc.categorias.escolas.locais} loc.</div>
+                                <div className="text-[10px] font-bold text-[#2667ff]">{sc.categorias.escolas.pessoas} pess.</div>
+                              </div>
+
+                              <div className="bg-white p-2 rounded border border-slate-200 text-center">
+                                <div className="text-[10px] font-semibold text-slate-500 truncate">7. Água</div>
+                                <div className="font-mono font-bold text-slate-800 text-xs">{sc.categorias.agua.locais} loc.</div>
+                                <div className="text-[10px] font-bold text-[#2667ff]">{sc.categorias.agua.pessoas} pess.</div>
+                              </div>
+
+                              <div className="bg-white p-2 rounded border border-slate-200 text-center">
+                                <div className="text-[10px] font-semibold text-slate-500 truncate">8. Outros</div>
+                                <div className="font-mono font-bold text-slate-800 text-xs">{sc.categorias.outros.locais} loc.</div>
+                                <div className="text-[10px] font-bold text-[#2667ff]">{sc.categorias.outros.pessoas} pess.</div>
+                              </div>
                             </div>
                           </div>
 
-                          {/* Estatísticas */}
-                          <div className="grid grid-cols-3 gap-2 bg-slate-50 p-2.5 rounded-lg border border-slate-200 text-center text-xs">
-                            <div>
-                              <span className="text-[10px] text-slate-500 block">Fichas</span>
-                              <strong className="text-slate-800 font-bold">{sub.fichas.length}</strong>
+                          {/* Lista das Fichas Preenchidas por este Supervisor CONFORME INSERIDAS NO FORMULÁRIO */}
+                          <div className="p-4 space-y-3">
+                            <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                              <span>Fichas Registadas de {sc.supervisor.nome} ({sc.fichasIndividuais.length} fichas):</span>
+                              <span className="text-slate-400 font-normal">
+                                Total Sim: <strong className="text-emerald-700">{sc.totalSim}</strong> &bull; Total Não: <strong className="text-rose-700">{sc.totalNao}</strong>
+                              </span>
                             </div>
-                            <div>
-                              <span className="text-[10px] text-slate-500 block">Sim</span>
-                              <strong className="text-[#1a53db] font-bold">{sub.totalSim}</strong>
-                            </div>
-                            <div>
-                              <span className="text-[10px] text-slate-500 block">Não</span>
-                              <strong className="text-slate-700 font-bold">{sub.totalNao}</strong>
-                            </div>
-                          </div>
 
-                          {/* Ações */}
-                          <div className="flex items-center justify-between pt-1">
-                            {!isReadOnly ? (
-                              <select
-                                value={sub.status}
-                                onChange={(e) =>
-                                  updateSubmissaoStatus(
-                                    sub.id,
-                                    e.target.value as 'Validado' | 'Pendente' | 'Em Revisão'
-                                  )
-                                }
-                                className="text-xs font-bold py-1 px-2 rounded border bg-white border-slate-300"
-                              >
-                                <option value="Validado">Validado</option>
-                                <option value="Pendente">Pendente</option>
-                                <option value="Em Revisão">Em Revisão</option>
-                              </select>
+                            {sc.fichasIndividuais.length === 0 ? (
+                              <div className="p-6 text-center text-slate-400 bg-slate-50 rounded-xl text-xs border border-dashed border-slate-200">
+                                Este supervisor ainda não enviou nenhuma ficha de mobilização.
+                              </div>
                             ) : (
-                              <div></div>
-                            )}
+                              <div className="space-y-3">
+                                {sc.fichasIndividuais.map((ficha, fIdx) => (
+                                  <div
+                                    key={`${ficha.submissaoId}-${fIdx}`}
+                                    className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 hover:border-indigo-300 transition space-y-2.5"
+                                  >
+                                    {/* Cabeçalho da Ficha */}
+                                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2">
+                                      <div className="flex items-center gap-2">
+                                        <span className="bg-[#2667ff] text-white font-bold text-xs px-2.5 py-0.5 rounded-full">
+                                          Ficha {ficha.numeroFicha || fIdx + 1}
+                                        </span>
+                                        <span className="font-bold text-slate-900 text-sm">
+                                          Bairro: {ficha.bairro}
+                                        </span>
+                                        <span className="text-[11px] text-slate-500 font-medium">
+                                          ({ficha.comuna})
+                                        </span>
+                                      </div>
 
-                            <div className="flex items-center gap-2">
-                              <button
-                                onClick={() => setSelectedSubmission(sub)}
-                                className="text-xs bg-[#eff4ff] hover:bg-[#dbeafe] text-[#1a53db] font-semibold px-3 py-1.5 rounded-lg transition inline-flex items-center gap-1 cursor-pointer"
-                              >
-                                <Eye className="w-3.5 h-3.5" />
-                                <span>Ver Detalhes</span>
-                              </button>
-                              {!isReadOnly && (
-                                <button
-                                  onClick={() => {
-                                    if (window.confirm('Deseja eliminar esta submissão?')) {
-                                      deleteSubmissao(sub.id);
-                                    }
-                                  }}
-                                  className="text-slate-400 hover:text-red-600 p-1.5 rounded"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              )}
-                            </div>
+                                      <div className="flex items-center gap-2 text-xs">
+                                        <span className="font-mono text-slate-600 bg-white px-2 py-0.5 rounded border border-slate-200">
+                                          Data: {ficha.data} (Dia {ficha.diaCampanha})
+                                        </span>
+                                        <span className={`badge ${ficha.status === 'Validado' ? 'badge-success' : 'badge-warning'}`}>
+                                          {ficha.status}
+                                        </span>
+                                      </div>
+                                    </div>
+
+                                    {/* Tabela das 8 Categorias da Ficha CONFORME INSERIDO */}
+                                    <div className="overflow-x-auto">
+                                      <table className="w-full text-center text-[11px] border border-slate-200 bg-white rounded-lg overflow-hidden">
+                                        <thead className="bg-slate-100/70 text-slate-600 font-semibold border-b border-slate-200">
+                                          <tr>
+                                            <th className="py-1 px-2 text-left">Categoria</th>
+                                            <th className="py-1 px-1">1. Casas</th>
+                                            <th className="py-1 px-1">2. Igrejas</th>
+                                            <th className="py-1 px-1">3. Praças</th>
+                                            <th className="py-1 px-1">4. Paragens</th>
+                                            <th className="py-1 px-1">5. Creches</th>
+                                            <th className="py-1 px-1">6. Escolas</th>
+                                            <th className="py-1 px-1">7. Água</th>
+                                            <th className="py-1 px-1">8. Outros</th>
+                                            <th className="py-1 px-2 font-bold text-[#1a53db] bg-blue-50/50">Total</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                          <tr>
+                                            <td className="py-1 px-2 font-semibold text-slate-700 text-left bg-slate-50/50">Locais</td>
+                                            <td className="py-1 px-1 font-mono">{ficha.casa_locais}</td>
+                                            <td className="py-1 px-1 font-mono">{ficha.igrejas_locais}</td>
+                                            <td className="py-1 px-1 font-mono">{ficha.pracas_locais}</td>
+                                            <td className="py-1 px-1 font-mono">{ficha.paragem_locais}</td>
+                                            <td className="py-1 px-1 font-mono">{ficha.creches_locais}</td>
+                                            <td className="py-1 px-1 font-mono">{ficha.escolas_locais}</td>
+                                            <td className="py-1 px-1 font-mono">{ficha.agua_locais}</td>
+                                            <td className="py-1 px-1 font-mono">{ficha.outros_locais}</td>
+                                            <td className="py-1 px-2 font-mono font-bold bg-blue-50/50 text-slate-900">{ficha.totalLocaisFicha}</td>
+                                          </tr>
+                                          <tr>
+                                            <td className="py-1 px-2 font-semibold text-slate-700 text-left bg-slate-50/50">Pessoas</td>
+                                            <td className="py-1 px-1 font-mono font-bold text-[#2667ff]">{ficha.casa_pessoas}</td>
+                                            <td className="py-1 px-1 font-mono font-bold text-[#2667ff]">{ficha.igrejas_pessoas}</td>
+                                            <td className="py-1 px-1 font-mono font-bold text-[#2667ff]">{ficha.pracas_pessoas}</td>
+                                            <td className="py-1 px-1 font-mono font-bold text-[#2667ff]">{ficha.paragem_pessoas}</td>
+                                            <td className="py-1 px-1 font-mono font-bold text-[#2667ff]">{ficha.creches_pessoas}</td>
+                                            <td className="py-1 px-1 font-mono font-bold text-[#2667ff]">{ficha.escolas_pessoas}</td>
+                                            <td className="py-1 px-1 font-mono font-bold text-[#2667ff]">{ficha.agua_pessoas}</td>
+                                            <td className="py-1 px-1 font-mono font-bold text-[#2667ff]">{ficha.outros_pessoas}</td>
+                                            <td className="py-1 px-2 font-mono font-black bg-blue-50/50 text-[#1a53db]">{ficha.totalPessoasFicha}</td>
+                                          </tr>
+                                        </tbody>
+                                      </table>
+                                    </div>
+
+                                    {/* Rodapé da Ficha: Aceitação Sim / Não */}
+                                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs">
+                                      <div className="flex items-center gap-3">
+                                        <span className="text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                                          &check; Total Sim (Aceitação): {ficha.total_sim}
+                                        </span>
+                                        <span className="text-rose-700 font-bold bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                                          &cross; Total Não (Recusas): {ficha.total_nao}
+                                        </span>
+                                      </div>
+
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const sub = submissoes.find((s) => s.id === ficha.submissaoId);
+                                          if (sub) setSelectedSubmission(sub);
+                                        }}
+                                        className="text-[#2667ff] hover:text-[#1a53db] font-semibold text-[11px] hover:underline cursor-pointer flex items-center gap-1"
+                                      >
+                                        <Eye className="w-3 h-3" />
+                                        <span>Ver Submissão Completa</span>
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         </div>
                       );
-                    })
-                  )}
+                    })}
                 </div>
-              </div>
+              )}
+
+              {/* ============================================================== */}
+              {/* SUB-VISTA 3: SEPARADO POR COORDENAÇÃO (POR COORDE.) */}
+              {/* ============================================================== */}
+              {relatorioSubView === 'coordenacao' && (
+                <div className="space-y-6">
+                  {/* Seletor de Coordenação */}
+                  <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <Compass className="w-5 h-5 text-purple-600" />
+                      <div>
+                        <div className="font-bold text-slate-800 text-sm">
+                          Relatório Separado por Coordenação de Campo
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          Agrupa os dados das fichas e o somatório dos 1 a 2 supervisores atribuídos a cada coordenação
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold text-slate-600">Filtrar Coordenação:</span>
+                      <select
+                        value={relatorioCoordenacaoId}
+                        onChange={(e) => setRelatorioCoordenacaoId(e.target.value)}
+                        className="py-1.5 px-3 text-xs border border-slate-300 rounded-lg bg-white font-semibold text-slate-800 outline-none"
+                      >
+                        <option value="todas">Todas as Coordenações</option>
+                        {coordenacoes.map((c) => (
+                          <option key={c.id} value={c.id}>{c.nome}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Lista de Coordenações */}
+                  {automatedFichaPlanning.coordenacoesCalculadas
+                    .filter((cc) => relatorioCoordenacaoId === 'todas' || cc.coordenacao.id === relatorioCoordenacaoId)
+                    .map((cc) => (
+                      <div key={cc.coordenacao.id} className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+                        {/* Cabeçalho da Coordenação */}
+                        <div className="p-5 bg-gradient-to-r from-purple-50/60 via-white to-slate-50 border-b border-slate-200">
+                          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <div className="w-8 h-8 rounded-lg bg-purple-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
+                                  <Compass className="w-4 h-4" />
+                                </div>
+                                <div>
+                                  <h4 className="font-bold text-slate-900 text-lg">{cc.coordenacao.nome}</h4>
+                                  <div className="text-xs text-slate-500 flex flex-wrap items-center gap-2">
+                                    <span>{cc.coordenacao.municipio || 'Sumbe'} ({cc.coordenacao.comuna || 'Sede'})</span>
+                                    <span>&bull;</span>
+                                    <span>Setores: <strong>{(cc.coordenacao.bairros || ['Sede']).join(', ')}</strong></span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Card da Meta da Coordenação (Soma dos Supervisores Vinculados) */}
+                            <div className="bg-purple-50/80 p-3 rounded-xl border border-purple-200 text-xs flex flex-wrap items-center gap-3 self-start md:self-auto">
+                              <div>
+                                <span className="text-[10px] text-purple-700 font-bold block uppercase">Meta Requerida da Coordenação</span>
+                                <strong className="text-purple-950 font-mono text-sm">
+                                  {cc.totalRequeridoCoord} fichas
+                                </strong>
+                              </div>
+                              <div className="border-l border-purple-200 pl-3">
+                                <span className="text-[10px] text-purple-700 font-bold block uppercase">Lançadas</span>
+                                <span className="font-bold text-slate-800">
+                                  {cc.totalLancadoCoord} ({cc.percentualCoordStr})
+                                </span>
+                              </div>
+                              <div className="border-l border-purple-200 pl-3">
+                                <span className="text-[10px] text-purple-700 font-bold block uppercase">Em Falta</span>
+                                <span className="font-bold text-amber-800 font-mono">
+                                  {cc.totalRestanteCoord} fichas
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Supervisores Vinculados */}
+                          <div className="mt-4 pt-3 border-t border-purple-100 flex flex-wrap items-center gap-2">
+                            <span className="text-xs font-semibold text-slate-600">Supervisores Vinculados:</span>
+                            {cc.supervisoresVinculados.length === 0 ? (
+                              <span className="text-xs text-slate-400 italic">Nenhum supervisor vinculado</span>
+                            ) : (
+                              cc.supervisoresVinculados.map((sc) => (
+                                <span
+                                  key={sc.supervisor.id}
+                                  className="bg-white border border-purple-200 text-purple-900 px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-2xs"
+                                >
+                                  <Users className="w-3 h-3 text-purple-600" />
+                                  <span>{sc.supervisor.nome} ({sc.supervisor.codigo})</span>
+                                  <span className="text-[10px] text-slate-500 font-mono font-normal">
+                                    &bull; {sc.fichasLancadas}/{sc.totalFichasRequeridas} fichas
+                                  </span>
+                                </span>
+                              ))
+                            )}
+                          </div>
+
+                          {/* Consolidação das 8 Categorias da Coordenação */}
+                          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 mt-4 pt-3 border-t border-slate-100">
+                            <div className="bg-white p-2 rounded border border-slate-200 text-center">
+                              <div className="text-[10px] font-semibold text-slate-500 truncate">1. Casas</div>
+                              <div className="font-mono font-bold text-slate-800 text-xs">{cc.categoriasCoord.casa.locais} loc.</div>
+                              <div className="text-[10px] font-bold text-purple-700">{cc.categoriasCoord.casa.pessoas} pess.</div>
+                            </div>
+
+                            <div className="bg-white p-2 rounded border border-slate-200 text-center">
+                              <div className="text-[10px] font-semibold text-slate-500 truncate">2. Igrejas</div>
+                              <div className="font-mono font-bold text-slate-800 text-xs">{cc.categoriasCoord.igrejas.locais} loc.</div>
+                              <div className="text-[10px] font-bold text-purple-700">{cc.categoriasCoord.igrejas.pessoas} pess.</div>
+                            </div>
+
+                            <div className="bg-white p-2 rounded border border-slate-200 text-center">
+                              <div className="text-[10px] font-semibold text-slate-500 truncate">3. Praças</div>
+                              <div className="font-mono font-bold text-slate-800 text-xs">{cc.categoriasCoord.pracas.locais} loc.</div>
+                              <div className="text-[10px] font-bold text-purple-700">{cc.categoriasCoord.pracas.pessoas} pess.</div>
+                            </div>
+
+                            <div className="bg-white p-2 rounded border border-slate-200 text-center">
+                              <div className="text-[10px] font-semibold text-slate-500 truncate">4. Paragens</div>
+                              <div className="font-mono font-bold text-slate-800 text-xs">{cc.categoriasCoord.paragem.locais} loc.</div>
+                              <div className="text-[10px] font-bold text-purple-700">{cc.categoriasCoord.paragem.pessoas} pess.</div>
+                            </div>
+
+                            <div className="bg-white p-2 rounded border border-slate-200 text-center">
+                              <div className="text-[10px] font-semibold text-slate-500 truncate">5. Creches</div>
+                              <div className="font-mono font-bold text-slate-800 text-xs">{cc.categoriasCoord.creches.locais} loc.</div>
+                              <div className="text-[10px] font-bold text-purple-700">{cc.categoriasCoord.creches.pessoas} pess.</div>
+                            </div>
+
+                            <div className="bg-white p-2 rounded border border-slate-200 text-center">
+                              <div className="text-[10px] font-semibold text-slate-500 truncate">6. Escolas</div>
+                              <div className="font-mono font-bold text-slate-800 text-xs">{cc.categoriasCoord.escolas.locais} loc.</div>
+                              <div className="text-[10px] font-bold text-purple-700">{cc.categoriasCoord.escolas.pessoas} pess.</div>
+                            </div>
+
+                            <div className="bg-white p-2 rounded border border-slate-200 text-center">
+                              <div className="text-[10px] font-semibold text-slate-500 truncate">7. Água</div>
+                              <div className="font-mono font-bold text-slate-800 text-xs">{cc.categoriasCoord.agua.locais} loc.</div>
+                              <div className="text-[10px] font-bold text-purple-700">{cc.categoriasCoord.agua.pessoas} pess.</div>
+                            </div>
+
+                            <div className="bg-white p-2 rounded border border-slate-200 text-center">
+                              <div className="text-[10px] font-semibold text-slate-500 truncate">8. Outros</div>
+                              <div className="font-mono font-bold text-slate-800 text-xs">{cc.categoriasCoord.outros.locais} loc.</div>
+                              <div className="text-[10px] font-bold text-purple-700">{cc.categoriasCoord.outros.pessoas} pess.</div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Fichas Individuais Desta Coordenação */}
+                        <div className="p-4 space-y-3">
+                          <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                            <span>Fichas Lançadas nesta Coordenação ({cc.todasFichasCoord.length}):</span>
+                            <span className="text-slate-500 font-normal">
+                              Pessoas: <strong>{cc.totalPessoasCoord.toLocaleString('pt-PT')}</strong> &bull; Locais: <strong>{cc.totalLocaisCoord}</strong>
+                            </span>
+                          </div>
+
+                          {cc.todasFichasCoord.length === 0 ? (
+                            <div className="p-6 text-center text-slate-400 bg-slate-50 rounded-xl text-xs border border-dashed border-slate-200">
+                              Nenhuma ficha lançada ainda nesta coordenação.
+                            </div>
+                          ) : (
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-left text-xs border border-slate-200 rounded-lg overflow-hidden">
+                                <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
+                                  <tr>
+                                    <th className="py-2.5 px-3">Data / Ficha</th>
+                                    <th className="py-2.5 px-3">Supervisor</th>
+                                    <th className="py-2.5 px-3">Bairro</th>
+                                    <th className="py-2.5 px-2 text-center">Casas</th>
+                                    <th className="py-2.5 px-2 text-center">Igrejas</th>
+                                    <th className="py-2.5 px-2 text-center">Praças</th>
+                                    <th className="py-2.5 px-2 text-center">Outros</th>
+                                    <th className="py-2.5 px-2 text-center font-bold text-purple-700">Locais</th>
+                                    <th className="py-2.5 px-2 text-center font-bold text-[#2667ff]">Sim (Pessoas)</th>
+                                    <th className="py-2.5 px-2 text-center text-slate-500">Não</th>
+                                    <th className="py-2.5 px-3 text-right">Ação</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                  {cc.todasFichasCoord.map((ficha, fIdx) => (
+                                    <tr key={`${ficha.submissaoId}-${fIdx}`} className="hover:bg-slate-50">
+                                      <td className="py-2 px-3 font-mono font-medium text-slate-800">
+                                        <div>{ficha.data}</div>
+                                        <div className="text-[10px] text-slate-400">Ficha {ficha.numeroFicha || fIdx + 1}</div>
+                                      </td>
+                                      <td className="py-2 px-3 font-semibold text-slate-800">
+                                        <div>{ficha.supervisorNome}</div>
+                                        <div className="text-[10px] font-mono text-[#2667ff]">{ficha.supervisorCodigo}</div>
+                                      </td>
+                                      <td className="py-2 px-3 text-slate-700 font-medium">
+                                        {ficha.bairro}
+                                      </td>
+                                      <td className="py-2 px-2 text-center font-mono text-slate-600">
+                                        {ficha.casa_locais}/{ficha.casa_pessoas}
+                                      </td>
+                                      <td className="py-2 px-2 text-center font-mono text-slate-600">
+                                        {ficha.igrejas_locais}/{ficha.igrejas_pessoas}
+                                      </td>
+                                      <td className="py-2 px-2 text-center font-mono text-slate-600">
+                                        {ficha.pracas_locais}/{ficha.pracas_pessoas}
+                                      </td>
+                                      <td className="py-2 px-2 text-center font-mono text-slate-600">
+                                        {ficha.outros_locais}/{ficha.outros_pessoas}
+                                      </td>
+                                      <td className="py-2 px-2 text-center font-bold font-mono text-purple-900 bg-purple-50/40">
+                                        {ficha.totalLocaisFicha}
+                                      </td>
+                                      <td className="py-2 px-2 text-center font-black font-mono text-[#1a53db] bg-blue-50/40">
+                                        {ficha.total_sim}
+                                      </td>
+                                      <td className="py-2 px-2 text-center font-mono text-slate-500">
+                                        {ficha.total_nao}
+                                      </td>
+                                      <td className="py-2 px-3 text-right">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const sub = submissoes.find((s) => s.id === ficha.submissaoId);
+                                            if (sub) setSelectedSubmission(sub);
+                                          }}
+                                          className="text-xs text-[#2667ff] hover:text-[#1a53db] font-semibold hover:underline cursor-pointer"
+                                        >
+                                          Ver Ficha
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -4674,19 +6349,23 @@ export const AdminView: React.FC = () => {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Total de Fichas Previstas <span className="text-[#2667ff]">*</span>
+                      Fichas Diárias Previstas <span className="text-[#2667ff]">*</span>
                     </label>
                     <input
                       type="number"
                       min={1}
-                      max={500}
+                      max={50}
                       required
-                      value={newSupTotalFichas}
-                      onChange={(e) => setNewSupTotalFichas(Math.max(1, parseInt(e.target.value) || 1))}
-                      className="w-full text-sm font-bold text-slate-900 bg-white"
-                      placeholder="Ex: 30"
+                      value={newSupFichasDiarias}
+                      onChange={(e) => {
+                        const val = Math.max(1, parseInt(e.target.value) || 1);
+                        setNewSupFichasDiarias(val);
+                        setNewSupTotalFichas(val * newSupDiasTrabalho);
+                      }}
+                      className="w-full text-sm font-bold text-slate-900 bg-white py-2 px-3 border border-slate-300 rounded-lg outline-none"
+                      placeholder="Ex: 5"
                     />
-                    <span className="text-[10px] text-slate-500">Fichas ao longo da campanha</span>
+                    <span className="text-[10px] text-slate-500">Meta diária de recolha</span>
                   </div>
 
                   <div>
@@ -4699,18 +6378,22 @@ export const AdminView: React.FC = () => {
                       max={60}
                       required
                       value={newSupDiasTrabalho}
-                      onChange={(e) => setNewSupDiasTrabalho(Math.max(1, parseInt(e.target.value) || 1))}
-                      className="w-full text-sm font-bold text-slate-900 bg-white"
-                      placeholder="Ex: 6 (mais de 5 dias)"
+                      onChange={(e) => {
+                        const val = Math.max(1, parseInt(e.target.value) || 1);
+                        setNewSupDiasTrabalho(val);
+                        setNewSupTotalFichas(newSupFichasDiarias * val);
+                      }}
+                      className="w-full text-sm font-bold text-slate-900 bg-white py-2 px-3 border border-slate-300 rounded-lg outline-none"
+                      placeholder="Ex: 5"
                     />
-                    <span className="text-[10px] text-slate-500">Duração estimada (+5 dias)</span>
+                    <span className="text-[10px] text-slate-500">Duração estimada da campanha</span>
                   </div>
                 </div>
 
                 <div className="bg-white p-2.5 rounded-lg border border-emerald-200 flex items-center justify-between text-xs">
-                  <span className="text-slate-600 font-medium">Meta Diária Calculada:</span>
-                  <span className="font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                    ~{Math.ceil(newSupTotalFichas / (newSupDiasTrabalho || 1))} fichas / dia
+                  <span className="text-slate-600 font-medium">Total Calculado da Campanha:</span>
+                  <span className="font-mono font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded border border-emerald-200">
+                    {newSupFichasDiarias * newSupDiasTrabalho} fichas ({newSupFichasDiarias}/dia × {newSupDiasTrabalho} dias)
                   </span>
                 </div>
               </div>
@@ -5529,6 +7212,421 @@ export const AdminView: React.FC = () => {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* MODAL: DEFINIR DIAS DA CAMPANHA PARA TODOS DE UMA SÓ VEZ */}
+      {/* ============================================================== */}
+      {showBatchDiasModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-[9999] overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6 text-slate-800 my-8 max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-150">
+            {/* Cabeçalho */}
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3 mb-4 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold">
+                  <Zap className="w-5 h-5 text-indigo-600" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-lg">
+                    Definir Dias da Campanha para Todos os Supervisores
+                  </h3>
+                  <div className="text-xs text-indigo-700 font-semibold">
+                    Configuração Global em Lote &bull; Recálculo Automático de Fichas
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowBatchDiasModal(false)}
+                className="text-slate-400 hover:text-slate-600 text-2xl font-bold cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* Conteúdo rolável */}
+            <form onSubmit={handleApplyBatchDias} className="overflow-y-auto flex-1 pr-1 space-y-4">
+              <div className="p-3.5 bg-indigo-50/70 rounded-xl border border-indigo-200 text-xs text-indigo-950 space-y-1.5">
+                <div className="font-bold flex items-center gap-1.5 text-indigo-900">
+                  <Calculator className="w-4 h-4 text-indigo-600" />
+                  <span>Como funciona a validação única:</span>
+                </div>
+                <p className="leading-relaxed text-indigo-900">
+                  Em vez de alterar supervisor por supervisor, insira aqui o número total de dias de trabalho da campanha uma única vez.
+                  Como cada supervisor já tem a sua meta diária de fichas, 
+                  <strong> o sistema calcula automaticamente quantas fichas cada um vai lançar até ao término dos dias</strong> 
+                  (<code>Fichas Diárias × Dias = Total da Campanha</code>).
+                </p>
+              </div>
+
+              {/* Campo de Entrada de Dias */}
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
+                <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider">
+                  1. Duração Total da Campanha (Dias de Trabalho para Todos)
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="number"
+                    min={1}
+                    max={90}
+                    required
+                    value={batchDias}
+                    onChange={(e) => setBatchDias(Math.max(1, parseInt(e.target.value) || 1))}
+                    className="w-32 text-lg font-bold font-mono text-indigo-700 bg-white py-2 px-3 border-2 border-indigo-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                  />
+                  <span className="text-sm font-semibold text-slate-700">
+                    dias de trabalho (válido para todos os {supervisores.length} supervisores)
+                  </span>
+                </div>
+              </div>
+
+              {/* Opção de Fichas Diárias */}
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+                <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider">
+                  2. Meta de Fichas Diárias dos Supervisores
+                </label>
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2.5 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="batchModoFichas"
+                      checked={batchModoFichas === 'manter'}
+                      onChange={() => setBatchModoFichas('manter')}
+                      className="text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span className="text-xs text-slate-700 font-medium">
+                      <strong>Manter o número diário de fichas de cada supervisor</strong> (Recomendado &mdash; apenas multiplica pelo novo número de dias)
+                    </span>
+                  </label>
+
+                  <label className="flex items-center gap-2.5 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="batchModoFichas"
+                      checked={batchModoFichas === 'padrao'}
+                      onChange={() => setBatchModoFichas('padrao')}
+                      className="text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span className="text-xs text-slate-700 font-medium">
+                      <strong>Definir uma meta diária padrão uniforme para todos:</strong>
+                    </span>
+                  </label>
+
+                  {batchModoFichas === 'padrao' && (
+                    <div className="ml-6 pl-3 border-l-2 border-indigo-200 pt-1 flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={1}
+                        max={50}
+                        value={batchFichasPadrao}
+                        onChange={(e) => setBatchFichasPadrao(Math.max(1, parseInt(e.target.value) || 1))}
+                        className="w-24 text-sm font-bold font-mono text-slate-800 bg-white py-1.5 px-3 border border-slate-300 rounded-lg outline-none"
+                      />
+                      <span className="text-xs text-slate-600 font-medium">fichas por dia para todos os supervisores</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Tabela de Simulação em Tempo Real */}
+              <div className="border border-slate-200 rounded-xl overflow-hidden">
+                <div className="bg-slate-100 p-2.5 text-xs font-bold text-slate-700 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Table className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Simulação em Tempo Real para os {supervisores.length} Supervisores:</span>
+                  </span>
+                  <span className="text-[11px] text-indigo-700 font-mono">
+                    Meta Total Global = {supervisores.reduce((acc, s) => {
+                      const diarias = batchModoFichas === 'padrao'
+                        ? batchFichasPadrao
+                        : (s.fichasDiariasPrevistas || Math.ceil((s.totalFichasPrevistas || 25) / (s.diasTrabalhoPrevistos || 5)) || 5);
+                      return acc + (diarias * batchDias);
+                    }, 0)} fichas
+                  </span>
+                </div>
+
+                <div className="max-h-48 overflow-y-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-50 text-slate-500 text-[11px] border-b border-slate-200">
+                      <tr>
+                        <th className="py-2 px-3">Supervisor</th>
+                        <th className="py-2 px-2 text-center">Fichas/Dia</th>
+                        <th className="py-2 px-2 text-center">Dias Novos</th>
+                        <th className="py-2 px-3 text-right font-bold text-indigo-900">Total Recalculado</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {supervisores.map((sup) => {
+                        const diarias = batchModoFichas === 'padrao'
+                          ? batchFichasPadrao
+                          : (sup.fichasDiariasPrevistas || Math.ceil((sup.totalFichasPrevistas || 25) / (sup.diasTrabalhoPrevistos || 5)) || 5);
+                        const novoTotal = diarias * batchDias;
+                        return (
+                          <tr key={sup.id} className="hover:bg-slate-50">
+                            <td className="py-1.5 px-3">
+                              <span className="font-semibold text-slate-800">{sup.nome}</span>
+                              <span className="text-[10px] text-slate-400 font-mono ml-1.5">({sup.codigo})</span>
+                            </td>
+                            <td className="py-1.5 px-2 text-center font-mono text-slate-700">{diarias}/dia</td>
+                            <td className="py-1.5 px-2 text-center font-mono text-indigo-700 font-bold">{batchDias} dias</td>
+                            <td className="py-1.5 px-3 text-right font-mono font-bold text-indigo-900 bg-indigo-50/40">
+                              {novoTotal} fichas
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-200 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowBatchDiasModal(false)}
+                  className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 text-xs font-semibold hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingBatchDias}
+                  className="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-semibold shadow-xs transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <Zap className="w-4 h-4 text-amber-300" />
+                  <span>{isSavingBatchDias ? 'A Gravar...' : `Salvar e Aplicar ${batchDias} Dias a Todos`}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* MODAL: EDIÇÃO COMPLETA DOS DADOS DO SUPERVISOR */}
+      {/* ============================================================== */}
+      {editingSupervisorFull && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-[9999] overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-xl w-full p-6 text-slate-800 my-8 max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-150">
+            {/* Cabeçalho */}
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3 mb-4 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold">
+                  <Edit3 className="w-5 h-5 text-indigo-600" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-lg">
+                    Editar Dados do Supervisor
+                  </h3>
+                  <div className="text-xs text-indigo-700 font-semibold font-mono">
+                    {editingSupervisorFull.codigo} &bull; {editingSupervisorFull.nome}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingSupervisorFull(null)}
+                className="text-slate-400 hover:text-slate-600 text-2xl font-bold cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* Formulário com Scroll */}
+            <form onSubmit={handleSaveSupervisorFull} className="overflow-y-auto flex-1 pr-1 space-y-4">
+              {/* Nome Completo e Código */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Nome Completo <span className="text-[#2667ff]">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editSupNome}
+                    onChange={(e) => setEditSupNome(e.target.value)}
+                    className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#2667ff] outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Código de Acesso <span className="text-[#2667ff]">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editSupCodigo}
+                    onChange={(e) => setEditSupCodigo(e.target.value.toUpperCase())}
+                    className="w-full text-sm font-mono font-bold text-[#1a53db] py-2 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#2667ff] outline-none uppercase"
+                  />
+                </div>
+              </div>
+
+              {/* Telefone e Comuna */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Telefone / WhatsApp
+                  </label>
+                  <input
+                    type="text"
+                    value={editSupTelefone}
+                    onChange={(e) => setEditSupTelefone(e.target.value)}
+                    placeholder="+244 923 000 000"
+                    className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#2667ff] outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Comuna de Atuação
+                  </label>
+                  <select
+                    value={editSupComuna}
+                    onChange={(e) => setEditSupComuna(e.target.value)}
+                    className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#2667ff] outline-none bg-white"
+                  >
+                    {COMUNAS_SUMBE.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Coordenação */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Coordenação de Trabalho Vinculada
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <select
+                    value={editSupCoordenacao}
+                    onChange={(e) => setEditSupCoordenacao(e.target.value)}
+                    className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#2667ff] outline-none bg-white"
+                  >
+                    <option value="">Selecione da lista de coordenações...</option>
+                    {coordenacoes.map((c) => (
+                      <option key={c.id} value={c.nome}>{c.nome}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    value={editSupCoordenacao}
+                    onChange={(e) => setEditSupCoordenacao(e.target.value)}
+                    placeholder="Ou digite o nome da coordenação..."
+                    className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#2667ff] outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* CARD DE CÁLCULO AUTOMÁTICO DE FICHAS COM BASE NOS DIAS */}
+              <div className="bg-indigo-50/70 p-4 rounded-xl border border-indigo-200 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Calculator className="w-4 h-4 text-indigo-700" />
+                  <span className="text-xs font-bold text-indigo-950 uppercase tracking-wide">
+                    Cálculo Automático da Campanha (Fichas Diárias &times; Dias)
+                  </span>
+                </div>
+                <p className="text-[11px] text-indigo-900 leading-relaxed">
+                  Informe quantas fichas este supervisor recolhe por dia e a duração em dias da campanha. O sistema <strong>calcula automaticamente o total de fichas</strong> que ele irá lançar até ao término dos dias.
+                </p>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Fichas Diárias Previstas <span className="text-[#2667ff]">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={50}
+                      required
+                      value={editSupFichasDiarias}
+                      onChange={(e) => {
+                        const val = Math.max(1, parseInt(e.target.value) || 1);
+                        setEditSupFichasDiarias(val);
+                        setEditSupTotalFichasCalculado(val * editSupDias);
+                      }}
+                      className="w-full text-sm font-bold font-mono text-slate-900 bg-white py-2 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                    />
+                    <span className="text-[10px] text-slate-500">Número de fichas por dia</span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Dias de Trabalho da Campanha <span className="text-[#2667ff]">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={60}
+                      required
+                      value={editSupDias}
+                      onChange={(e) => {
+                        const val = Math.max(1, parseInt(e.target.value) || 1);
+                        setEditSupDias(val);
+                        setEditSupTotalFichasCalculado(editSupFichasDiarias * val);
+                      }}
+                      className="w-full text-sm font-bold font-mono text-slate-900 bg-white py-2 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                    />
+                    <span className="text-[10px] text-slate-500">Dias que o supervisor vai trabalhar</span>
+                  </div>
+                </div>
+
+                {/* Banner de Resultado Calculado */}
+                <div className="bg-white p-3 rounded-xl border border-indigo-200 flex items-center justify-between text-xs shadow-2xs">
+                  <div>
+                    <span className="text-slate-500 block font-medium">Total Calculado pelo Sistema:</span>
+                    <span className="text-[11px] text-slate-400">
+                      {editSupFichasDiarias} fichas/dia &times; {editSupDias} dias de trabalho
+                    </span>
+                  </div>
+                  <div className="text-right">
+                    <span className="font-mono font-black text-indigo-900 bg-indigo-50 px-3 py-1.5 rounded-lg border border-indigo-200 text-sm">
+                      = {editSupFichasDiarias * editSupDias} fichas
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Estado Ativo / Inativo */}
+              <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200">
+                <div>
+                  <div className="text-xs font-bold text-slate-800">Estado da Conta do Supervisor</div>
+                  <div className="text-[11px] text-slate-500">Supervisores ativos podem iniciar sessão e submeter fichas</div>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={editSupAtivo}
+                    onChange={(e) => setEditSupAtivo(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                </label>
+              </div>
+
+              {/* Botões do Rodapé */}
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-200 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setEditingSupervisorFull(null)}
+                  className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 text-xs font-semibold hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingSupervisorFull}
+                  className="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-semibold shadow-xs transition cursor-pointer flex items-center gap-1.5"
+                >
+                  {isSavingSupervisorFull ? 'A Guardar...' : 'Salvar Alterações do Supervisor'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -33,6 +33,7 @@ interface AppContextType {
   addSupervisor: (data: Omit<Supervisor, 'id' | 'dataCriacao'>) => Promise<Supervisor>;
   updateSupervisor: (id: string, data: Partial<Supervisor>) => Promise<void>;
   deleteSupervisor: (id: string) => Promise<void>;
+  batchUpdateSupervisoresDias: (novosDias: number, defaultFichasDiarias?: number) => Promise<{ success: boolean; count: number; totalFichasCampanha: number }>;
   addCoordenacao: (data: Omit<Coordenacao, 'id' | 'dataCriacao'>) => Promise<Coordenacao>;
   updateCoordenacao: (id: string, data: Partial<Coordenacao>) => Promise<void>;
   deleteCoordenacao: (id: string) => Promise<void>;
@@ -485,6 +486,55 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const batchUpdateSupervisoresDias = async (
+    novosDias: number,
+    defaultFichasDiarias?: number
+  ): Promise<{ success: boolean; count: number; totalFichasCampanha: number }> => {
+    const validDias = Math.max(1, Number(novosDias) || 5);
+    let totalCampanha = 0;
+
+    const updatedList = supervisores.map((s) => {
+      // Determina a meta de fichas diárias: se passado defaultFichasDiarias usa ele, senão mantém a do supervisor ou calcula
+      const fichasDiarias =
+        defaultFichasDiarias !== undefined && defaultFichasDiarias > 0
+          ? defaultFichasDiarias
+          : s.fichasDiariasPrevistas || Math.ceil((s.totalFichasPrevistas || 25) / (s.diasTrabalhoPrevistos || 5)) || 5;
+
+      const totalFichasCalculado = fichasDiarias * validDias;
+      totalCampanha += totalFichasCalculado;
+
+      return {
+        ...s,
+        diasTrabalhoPrevistos: validDias,
+        fichasDiariasPrevistas: fichasDiarias,
+        totalFichasPrevistas: totalFichasCalculado,
+      };
+    });
+
+    // Atualização otimista local
+    setSupervisores(updatedList);
+
+    // Gravação em lote no Firestore
+    try {
+      const promises = updatedList.map((sup) =>
+        updateDoc(doc(db, 'supervisores', sup.id), {
+          diasTrabalhoPrevistos: sup.diasTrabalhoPrevistos,
+          fichasDiariasPrevistas: sup.fichasDiariasPrevistas,
+          totalFichasPrevistas: sup.totalFichasPrevistas,
+        })
+      );
+      await Promise.all(promises);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, 'supervisores');
+    }
+
+    return {
+      success: true,
+      count: updatedList.length,
+      totalFichasCampanha: totalCampanha,
+    };
+  };
+
   // Leitor (Utilizador Só de Leitura) CRUD with Firestore Persistence
   const addLeitor = async (data: Omit<UtilizadorLeitura, 'id' | 'dataCriacao'>): Promise<UtilizadorLeitura> => {
     const newId = `leitor-${Date.now()}`;
@@ -784,6 +834,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addSupervisor,
         updateSupervisor,
         deleteSupervisor,
+        batchUpdateSupervisoresDias,
         addCoordenacao,
         updateCoordenacao,
         deleteCoordenacao,

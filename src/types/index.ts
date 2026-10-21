@@ -21,6 +21,7 @@ export interface Supervisor {
   comuna: string;
   coordenacao: string; // Nome da Coordenação de atuação
   coordenacaoId?: string; // ID da Coordenação vinculada
+  fichasDiariasPrevistas?: number; // Quantidade de fichas diárias previstas (ex: 5 fichas/dia)
   totalFichasPrevistas?: number; // Total de fichas atribuídas durante a campanha
   diasTrabalhoPrevistos?: number; // Quantidade de dias de trabalho previstos (ex: 5, 6, 7...)
   ativo: boolean;

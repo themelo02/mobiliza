@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { FichaAtividade } from '../types';
-import { CheckCircle2, Plus, Minus, Send, AlertTriangle, ArrowRight, Printer, Sparkles, Building2, MapPin } from 'lucide-react';
+import { CheckCircle2, Plus, Minus, Send, AlertTriangle, ArrowRight, Printer, Sparkles, Building2, MapPin, Award, CheckCircle } from 'lucide-react';
 
 interface FichaFormState {
   id: string;
@@ -38,7 +38,7 @@ const getTodayString = () => {
 };
 
 export const SupervisorView: React.FC = () => {
-  const { userSession, supervisores, addSubmissao, setActiveScreen } = useApp();
+  const { userSession, supervisores, submissoes, addSubmissao, setActiveScreen } = useApp();
 
   const isSupervisorSession = userSession?.tipo === 'supervisor';
   const supervisorData = userSession?.supervisor || supervisores[0];
@@ -51,6 +51,20 @@ export const SupervisorView: React.FC = () => {
   const activeSupervisor = isSupervisorSession
     ? supervisorData
     : supervisores.find((s) => s.id === selectedAdminSupId) || supervisores[0];
+
+  // Total de fichas que este supervisor já enviou no decorrer de toda a atividade
+  const fichasEnviadasAcumuladas = useMemo(() => {
+    if (!activeSupervisor?.id) return 0;
+    return submissoes
+      .filter((s) => s.supervisorId === activeSupervisor.id)
+      .reduce((acc, s) => acc + (s.fichas ? s.fichas.length : 0), 0);
+  }, [submissoes, activeSupervisor?.id]);
+
+  const metaFichasSupervisor = activeSupervisor?.totalFichasPrevistas || 25;
+  const remessasSupervisor = useMemo(() => {
+    if (!activeSupervisor?.id) return 0;
+    return submissoes.filter((s) => s.supervisorId === activeSupervisor.id).length;
+  }, [submissoes, activeSupervisor?.id]);
 
   const [dataColeta, setDataColeta] = useState<string>(getTodayString);
   const [diaCampanha, setDiaCampanha] = useState<number>(1);
@@ -239,10 +253,63 @@ export const SupervisorView: React.FC = () => {
   };
 
   return (
-    <div id="supervisor-view" className="py-6 px-4 md:px-6 relative min-h-screen">
+    <div id="supervisor-view" className="py-4 sm:py-6 px-3 sm:px-4 md:px-6 relative min-h-screen">
       {/* Contador Flutuante de Fichas */}
-      <div id="ficha-counter" title="Número total de fichas nesta submissão">
-        <span>📋</span> Fichas: <span id="counter-value">{fichas.length}</span>
+      <div id="ficha-counter" title="Número de fichas neste lote atual">
+        <span>📋</span> Fichas no lote: <span id="counter-value">{fichas.length}</span>
+      </div>
+
+      {/* PAINEL SUPERIOR EM DESTAQUE: QUANTAS FICHAS JÁ ENVIOU NO DECORRER DA ATIVIDADE */}
+      <div className="max-w-[900px] mx-auto mb-4">
+        <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-[#1a53db] text-white p-4 sm:p-5 rounded-2xl shadow-md border border-blue-400/20">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3.5">
+              <div className="w-12 h-12 rounded-xl bg-white/10 backdrop-blur-sm border border-white/20 flex items-center justify-center text-2xl shadow-inner shrink-0">
+                📋
+              </div>
+              <div>
+                <div className="text-[11px] uppercase tracking-wider text-blue-200 font-extrabold flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                  <span>Fichas Enviadas na Atividade</span>
+                </div>
+                <div className="text-2xl sm:text-3xl font-black text-white flex items-baseline gap-2 mt-0.5">
+                  <span>{fichasEnviadasAcumuladas}</span>
+                  <span className="text-sm font-semibold text-blue-100">
+                    {fichasEnviadasAcumuladas === 1 ? 'ficha enviada' : 'fichas enviadas'} no decorrer da atividade
+                  </span>
+                </div>
+                <p className="text-xs text-blue-100/80 mt-1">
+                  Supervisor: <strong className="text-white">{activeSupervisor?.nome}</strong> ({activeSupervisor?.codigo}) &bull; Comuna: <strong className="text-white">{activeSupervisor?.comuna || 'Sede'}</strong>
+                  {activeSupervisor?.coordenacao && (
+                    <span> &bull; Coordenação: <strong className="text-white">{activeSupervisor.coordenacao}</strong></span>
+                  )}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 self-start sm:self-center">
+              <div className="bg-white/10 backdrop-blur-md px-3.5 py-2 rounded-xl border border-white/15 text-center">
+                <div className="text-[10px] uppercase font-bold text-blue-200">Meta Geral</div>
+                <div className="text-base font-extrabold text-white">
+                  {metaFichasSupervisor} fichas
+                </div>
+                <div className="text-[10px] text-emerald-300 font-medium">
+                  {metaFichasSupervisor > 0 ? ((fichasEnviadasAcumuladas / metaFichasSupervisor) * 100).toFixed(0) : 0}% da meta
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setActiveScreen('historico')}
+                className="bg-white text-[#1a53db] hover:bg-blue-50 font-bold px-3.5 py-2.5 rounded-xl text-xs transition cursor-pointer shadow-sm flex items-center gap-1.5 shrink-0"
+                title="Consultar fichas já enviadas"
+              >
+                <span>Ver Histórico</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Barra Superior */}
@@ -692,11 +759,34 @@ export const SupervisorView: React.FC = () => {
             )}
           </section>
 
+          {/* Contabilização Exclusiva do Número de Fichas Deste Lançamento */}
+          <div className="bg-blue-50/90 border border-blue-200 p-4 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-700 mt-2">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-blue-100 text-blue-700 font-bold flex items-center justify-center shrink-0 text-lg">
+                📋
+              </div>
+              <div>
+                <div className="font-bold text-slate-900 text-sm">
+                  Contabilizando {fichas.length} {fichas.length === 1 ? 'ficha a ser lançada' : 'fichas a serem lançadas'}
+                </div>
+                <div className="text-[11px] text-slate-500 mt-0.5">
+                  Fichas já enviadas anteriormente: <strong>{fichasEnviadasAcumuladas}</strong> &bull; Total acumulado após este envio: <strong className="text-blue-900">{fichasEnviadasAcumuladas + fichas.length} fichas</strong>
+                </div>
+              </div>
+            </div>
+            <div className="shrink-0">
+              <span className="inline-flex items-center gap-1.5 bg-blue-600 text-white font-mono font-bold px-3 py-1.5 rounded-lg text-xs shadow-xs">
+                <span>Número de Fichas:</span>
+                <span className="text-sm bg-white/20 px-1.5 py-0.5 rounded">{fichas.length}</span>
+              </span>
+            </div>
+          </div>
+
           {/* Ações do Formulário */}
-          <div className="form-actions">
+          <div className="form-actions mt-3">
             <button type="submit" className="btn btn-primary" title="Enviar para a base do Administrador">
               <Send className="w-4 h-4" />
-              <span>➡️ Enviar Dados para o Administrador</span>
+              <span>➡️ Lançar {fichas.length} {fichas.length === 1 ? 'Ficha' : 'Fichas'} para o Administrador</span>
             </button>
           </div>
         </form>
@@ -711,20 +801,24 @@ export const SupervisorView: React.FC = () => {
             </div>
 
             <h3 className="text-xl font-bold text-center text-slate-900 mb-1">
-              Dados Enviados com Sucesso!
+              {submittedModalData.totalFichas} {submittedModalData.totalFichas === 1 ? 'Ficha Lançada' : 'Fichas Lançadas'} com Sucesso!
             </h3>
             <p className="text-sm text-slate-500 text-center mb-6">
-              O Administrador Provincial e a Coordenação Municipal do Sumbe já receberam o seu relatório.
+              O seu envio foi registado no Firebase e já se encontra contabilizado na base central.
             </p>
 
-            <div className="bg-[#eff4ff] border border-[#bfdbfe] rounded-xl p-4 mb-6 space-y-2 text-sm">
+            <div className="bg-[#eff4ff] border border-[#bfdbfe] rounded-xl p-4 mb-6 space-y-2.5 text-sm">
               <div className="flex justify-between border-b border-[#bfdbfe]/60 pb-1.5">
-                <span className="text-slate-600">Supervisor Atribuído:</span>
+                <span className="text-slate-600">Supervisor:</span>
                 <span className="font-semibold text-slate-900">{activeSupervisor?.nome}</span>
               </div>
               <div className="flex justify-between border-b border-[#bfdbfe]/60 pb-1.5">
-                <span className="text-slate-600">Total de Fichas:</span>
-                <span className="font-semibold text-[#1a53db]">{submittedModalData.totalFichas} ficha(s)</span>
+                <span className="text-slate-600">Fichas Deste Lote:</span>
+                <span className="font-extrabold text-[#1a53db] text-base">{submittedModalData.totalFichas} ficha(s)</span>
+              </div>
+              <div className="flex justify-between border-b border-[#bfdbfe]/60 pb-1.5 bg-blue-100/60 -mx-4 px-4 py-1.5">
+                <span className="text-blue-900 font-bold">Total Acumulado na Atividade:</span>
+                <span className="font-mono font-black text-blue-950 text-base">{fichasEnviadasAcumuladas} fichas enviadas</span>
               </div>
               <div className="flex justify-between border-b border-[#bfdbfe]/60 pb-1.5">
                 <span className="text-slate-600">Total Pessoas Alcançadas:</span>
@@ -734,9 +828,9 @@ export const SupervisorView: React.FC = () => {
                 <span className="text-slate-600">Locais Visitados:</span>
                 <span className="font-semibold text-slate-900">{submittedModalData.totalLocais}</span>
               </div>
-              <div className="flex justify-between pt-1">
-                <span className="text-slate-600">Bairros:</span>
-                <span className="font-semibold text-slate-900 text-right text-xs max-w-[200px] truncate">
+              <div className="flex justify-between items-start pt-1 gap-2">
+                <span className="text-slate-600 shrink-0">Bairros:</span>
+                <span className="font-semibold text-slate-900 text-right text-xs break-words max-w-[220px]">
                   {submittedModalData.bairros.join(', ')}
                 </span>
               </div>

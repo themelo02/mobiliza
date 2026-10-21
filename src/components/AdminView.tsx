@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useApp, ADMIN_CODE } from '../context/AppContext';
-import { Supervisor, Submissao, COMUNAS_SUMBE, UtilizadorLeitura } from '../types';
+import { Supervisor, Submissao, COMUNAS_SUMBE, UtilizadorLeitura, Coordenacao } from '../types';
 import {
   BarChart,
   Bar,
@@ -53,6 +53,11 @@ import {
   CheckSquare,
   Clock,
   Edit3,
+  Menu,
+  X,
+  Network,
+  Briefcase,
+  UserPlus,
 } from 'lucide-react';
 
 const COLORS_9_SUPERVISORES = [
@@ -72,12 +77,18 @@ export const AdminView: React.FC = () => {
     supervisores,
     submissoes,
     leitores,
+    coordenacoes,
     userSession,
     adminCode,
     updateAdminCode,
     addSupervisor,
     updateSupervisor,
     deleteSupervisor,
+    addCoordenacao,
+    updateCoordenacao,
+    deleteCoordenacao,
+    assignSupervisorToCoordenacao,
+    removeSupervisorFromCoordenacao,
     addLeitor,
     updateLeitor,
     toggleLeitorStatus,
@@ -95,7 +106,7 @@ export const AdminView: React.FC = () => {
 
   const isReadOnly = userSession?.tipo === 'leitor';
 
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'diario' | 'supervisores' | 'leitores' | 'relatorios' | 'configuracoes'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'diario' | 'coordenacoes' | 'supervisores' | 'leitores' | 'relatorios' | 'configuracoes'>('dashboard');
 
   // Supervisor Form State (com metas de fichas e dias de trabalho)
   const [showAddSupervisorModal, setShowAddSupervisorModal] = useState(false);
@@ -115,8 +126,47 @@ export const AdminView: React.FC = () => {
   const [editDiasTrabalho, setEditDiasTrabalho] = useState<number>(5);
   const [isSavingTarget, setIsSavingTarget] = useState<boolean>(false);
 
+  // Mobile Drawer State
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  // Coordenação Form State (Cada coordenação tem 1 a 2 supervisores)
+  const [showAddCoordenacaoModal, setShowAddCoordenacaoModal] = useState(false);
+  const [editingCoordenacao, setEditingCoordenacao] = useState<Coordenacao | null>(null);
+  const [newCoordNome, setNewCoordNome] = useState('');
+  const [newCoordDescricao, setNewCoordDescricao] = useState('');
+  const [newCoordBairros, setNewCoordBairros] = useState('');
+  const [newCoordSupervisorIds, setNewCoordSupervisorIds] = useState<string[]>([]);
+  const [newCoordMetaFichas, setNewCoordMetaFichas] = useState<number>(50);
+  const [isCreatingCoord, setIsCreatingCoord] = useState(false);
+  const [coordSuccessMsg, setCoordSuccessMsg] = useState('');
+
+  // Edit Coordenação State
+  const [editCoordNome, setEditCoordNome] = useState('');
+  const [editCoordDescricao, setEditCoordDescricao] = useState('');
+  const [editCoordBairros, setEditCoordBairros] = useState('');
+  const [editCoordSupervisorIds, setEditCoordSupervisorIds] = useState<string[]>([]);
+  const [editCoordMetaFichas, setEditCoordMetaFichas] = useState<number>(50);
+  const [isSavingCoord, setIsSavingCoord] = useState(false);
+
+  // Assign Supervisor to Coordenação Quick Modal
+  const [assignModalCoord, setAssignModalCoord] = useState<Coordenacao | null>(null);
+  const [selectedSupervisorToAssign, setSelectedSupervisorToAssign] = useState<string>('');
+
   // Filter by Day / Date
   const [filterDia, setFilterDia] = useState<string>('todos');
+
+  // Controlo Diário: Sub-vistas (Supervisores, Coordenações, ou Explorador de Fichas por Dia)
+  const [diarioSubView, setDiarioSubView] = useState<'supervisores' | 'coordenacoes' | 'explorador'>('supervisores');
+  const [diarioFiltroData, setDiarioFiltroData] = useState<string>('todas');
+  const [diarioFiltroSupervisor, setDiarioFiltroSupervisor] = useState<string>('todos');
+  const [diarioFiltroCoordenacao, setDiarioFiltroCoordenacao] = useState<string>('todas');
+
+  const handleVerFichasDoDia = (data?: string, supervisorId?: string, coordenacaoId?: string) => {
+    if (data) setDiarioFiltroData(data);
+    if (supervisorId) setDiarioFiltroSupervisor(supervisorId);
+    if (coordenacaoId) setDiarioFiltroCoordenacao(coordenacaoId);
+    setDiarioSubView('explorador');
+  };
 
   // Leitor Form State (Utilizador Só de Leitura)
   const [showAddLeitorModal, setShowAddLeitorModal] = useState(false);
@@ -469,7 +519,64 @@ export const AdminView: React.FC = () => {
       };
     });
 
-    // 3. Totais por dia de trabalho
+    // 3. Matriz de desempenho por Coordenação (cada coordenação tem 1 a 2 supervisores)
+    const coordenacaoMatrix = coordenacoes.map((coord) => {
+      // Obter supervisores atribuídos a esta coordenação
+      const assignedSups = supervisores.filter(
+        (s) =>
+          (coord.supervisorIds && coord.supervisorIds.includes(s.id)) ||
+          s.coordenacaoId === coord.id ||
+          (coord.nome && s.coordenacao && s.coordenacao.toLowerCase().trim() === coord.nome.toLowerCase().trim())
+      );
+      const supIds = assignedSups.map((s) => s.id);
+
+      // Submissões pertencentes a esses supervisores
+      const coordSubs = submissoes.filter((s) => supIds.includes(s.supervisorId));
+
+      const totalPrevisto =
+        coord.metaFichasTotal ||
+        (assignedSups.length > 0
+          ? assignedSups.reduce((acc, s) => acc + (s.totalFichasPrevistas || 25), 0)
+          : 50);
+
+      const fichasPorData: Record<string, number> = {};
+      const pessoasPorData: Record<string, number> = {};
+      let totalFichasLancadas = 0;
+      let totalPessoasLancadas = 0;
+      let diasTrabalhados = 0;
+
+      sortedDates.forEach((d) => {
+        const subsDoDia = coordSubs.filter((s) => s.data === d);
+        let fichasNoDia = 0;
+        let pessoasNoDia = 0;
+        subsDoDia.forEach((s) => {
+          fichasNoDia += s.fichas ? s.fichas.length : 0;
+          pessoasNoDia += s.totalSim;
+        });
+        fichasPorData[d] = fichasNoDia;
+        pessoasPorData[d] = pessoasNoDia;
+        totalFichasLancadas += fichasNoDia;
+        totalPessoasLancadas += pessoasNoDia;
+        if (fichasNoDia > 0) diasTrabalhados += 1;
+      });
+
+      const percentualCumprido = totalPrevisto > 0 ? (totalFichasLancadas / totalPrevisto) * 100 : 0;
+
+      return {
+        coordenacao: coord,
+        supervisores: assignedSups,
+        totalPrevisto,
+        fichasPorData,
+        pessoasPorData,
+        totalFichasLancadas,
+        totalPessoasLancadas,
+        diasTrabalhados,
+        percentualCumprido: Number(percentualCumprido.toFixed(1)),
+        percentualStr: `${percentualCumprido.toFixed(1)}%`,
+      };
+    });
+
+    // 4. Totais por dia de trabalho
     const totalsByDate: Record<string, { totalFichas: number; totalPessoas: number; supervisoresAtivos: number }> = {};
     sortedDates.forEach((d) => {
       let fCount = 0;
@@ -487,7 +594,7 @@ export const AdminView: React.FC = () => {
       totalsByDate[d] = { totalFichas: fCount, totalPessoas: pCount, supervisoresAtivos: activeSupCount };
     });
 
-    // 4. Chart Data para Recharts
+    // 5. Chart Data para Recharts
     const chartData = sortedDates.map((d) => {
       const info = dateLabels[d];
       const tot = totalsByDate[d] || { totalFichas: 0, totalPessoas: 0, supervisoresAtivos: 0 };
@@ -501,7 +608,7 @@ export const AdminView: React.FC = () => {
       };
     });
 
-    // 5. Total de fichas previstas somando todos os supervisores
+    // 6. Total de fichas previstas somando todos os supervisores
     const totalGeralPrevisto = supervisorMatrix.reduce((acc, m) => acc + m.totalPrevisto, 0);
     const totalGeralLancado = supervisorMatrix.reduce((acc, m) => acc + m.totalFichasLancadas, 0);
     const taxaGlobalCumprimento = totalGeralPrevisto > 0 ? (totalGeralLancado / totalGeralPrevisto) * 100 : 0;
@@ -510,13 +617,40 @@ export const AdminView: React.FC = () => {
       sortedDates,
       dateLabels,
       supervisorMatrix,
+      coordenacaoMatrix,
       totalsByDate,
       chartData,
       totalGeralPrevisto,
       totalGeralLancado,
       taxaGlobalCumprimento: Number(taxaGlobalCumprimento.toFixed(1)),
     };
-  }, [supervisores, submissoes]);
+  }, [supervisores, submissoes, coordenacoes]);
+
+  // Submissões filtradas para o Explorador de Fichas por Dia (Supervisores & Coordenações)
+  const filteredSubmissoesDiario = useMemo(() => {
+    return submissoes.filter((sub) => {
+      // Filtro de Data
+      if (diarioFiltroData !== 'todas' && sub.data !== diarioFiltroData) {
+        return false;
+      }
+      // Filtro de Supervisor
+      if (diarioFiltroSupervisor !== 'todos' && sub.supervisorId !== diarioFiltroSupervisor) {
+        return false;
+      }
+      // Filtro de Coordenação
+      if (diarioFiltroCoordenacao !== 'todas') {
+        const sup = supervisores.find((s) => s.id === sub.supervisorId);
+        const coord = coordenacoes.find((c) => c.id === diarioFiltroCoordenacao);
+        if (!sup || !coord) return false;
+        const matchesCoord =
+          (coord.supervisorIds && coord.supervisorIds.includes(sup.id)) ||
+          sup.coordenacaoId === coord.id ||
+          (coord.nome && sup.coordenacao && sup.coordenacao.toLowerCase().trim() === coord.nome.toLowerCase().trim());
+        if (!matchesCoord) return false;
+      }
+      return true;
+    });
+  }, [submissoes, supervisores, coordenacoes, diarioFiltroData, diarioFiltroSupervisor, diarioFiltroCoordenacao]);
 
   const handleCreateLeitor = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -543,6 +677,151 @@ export const AdminView: React.FC = () => {
       alert('Erro ao criar utilizador no Firebase.');
     } finally {
       setIsCreatingLeitor(false);
+    }
+  };
+
+  // Coordenacao Handlers (Cada coordenação tem 1 a 2 supervisores)
+  const handleCreateCoordenacao = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCoordNome.trim()) {
+      alert('Por favor insira o nome da coordenação.');
+      return;
+    }
+
+    if (newCoordSupervisorIds.length > 2) {
+      alert('Regra do Sistema: Cada coordenação pode ter no máximo 2 supervisores.');
+      return;
+    }
+
+    setIsCreatingCoord(true);
+    try {
+      const bairrosArray = newCoordBairros
+        .split(',')
+        .map((b) => b.trim())
+        .filter((b) => b.length > 0);
+
+      const created = await addCoordenacao({
+        nome: newCoordNome.trim(),
+        descricao: newCoordDescricao.trim() || 'Setor de mobilização comunitária no Sumbe',
+        bairros: bairrosArray.length > 0 ? bairrosArray : ['Sede'],
+        municipio: 'Sumbe',
+        comuna: 'Sede',
+        supervisorIds: newCoordSupervisorIds.slice(0, 2),
+        limiteSupervisores: 2,
+        metaFichasTotal: Math.max(1, Number(newCoordMetaFichas) || 50),
+      });
+
+      // Update supervisors assigned
+      for (const supId of newCoordSupervisorIds) {
+        await updateSupervisor(supId, {
+          coordenacao: created.nome,
+          coordenacaoId: created.id,
+        });
+      }
+
+      setNewCoordNome('');
+      setNewCoordDescricao('');
+      setNewCoordBairros('');
+      setNewCoordSupervisorIds([]);
+      setNewCoordMetaFichas(50);
+      setShowAddCoordenacaoModal(false);
+      setCoordSuccessMsg(`Coordenação "${created.nome}" cadastrada com sucesso com ${created.supervisorIds.length} supervisor(es)!`);
+      setTimeout(() => setCoordSuccessMsg(''), 6000);
+    } catch {
+      alert('Erro ao gravar coordenação no Firebase.');
+    } finally {
+      setIsCreatingCoord(false);
+    }
+  };
+
+  const handleOpenAssignModal = (coord: Coordenacao) => {
+    setAssignModalCoord(coord);
+    const available = supervisores.filter((s) => !coord.supervisorIds.includes(s.id));
+    setSelectedSupervisorToAssign(available[0]?.id || '');
+  };
+
+  const handleConfirmAssign = async () => {
+    if (!assignModalCoord || !selectedSupervisorToAssign) return;
+    const res = await assignSupervisorToCoordenacao(assignModalCoord.id, selectedSupervisorToAssign);
+    if (!res.success) {
+      alert(res.message);
+    } else {
+      setAssignModalCoord(null);
+      setSelectedSupervisorToAssign('');
+    }
+  };
+
+  const handleRemoveSupervisorFromCoord = async (coordId: string, supId: string) => {
+    if (window.confirm('Deseja desvincular este supervisor desta coordenação?')) {
+      await removeSupervisorFromCoordenacao(coordId, supId);
+    }
+  };
+
+  const handleOpenEditCoordenacao = (coord: Coordenacao) => {
+    setEditingCoordenacao(coord);
+    setEditCoordNome(coord.nome);
+    setEditCoordDescricao(coord.descricao || '');
+    setEditCoordBairros((coord.bairros || []).join(', '));
+    setEditCoordSupervisorIds(coord.supervisorIds || []);
+    setEditCoordMetaFichas(coord.metaFichasTotal || 50);
+  };
+
+  const handleSaveEditCoordenacao = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingCoordenacao) return;
+    if (!editCoordNome.trim()) {
+      alert('Por favor insira o nome da coordenação.');
+      return;
+    }
+    if (editCoordSupervisorIds.length > 2) {
+      alert('Regra do Sistema: Cada coordenação pode ter no máximo 2 supervisores.');
+      return;
+    }
+
+    setIsSavingCoord(true);
+    try {
+      const bairrosArray = editCoordBairros
+        .split(',')
+        .map((b) => b.trim())
+        .filter((b) => b.length > 0);
+
+      await updateCoordenacao(editingCoordenacao.id, {
+        nome: editCoordNome.trim(),
+        descricao: editCoordDescricao.trim(),
+        bairros: bairrosArray.length > 0 ? bairrosArray : ['Sede'],
+        supervisorIds: editCoordSupervisorIds.slice(0, 2),
+        metaFichasTotal: Math.max(1, Number(editCoordMetaFichas) || 50),
+      });
+
+      // Atualizar o nome da coordenação nos supervisores vinculados
+      for (const supId of editCoordSupervisorIds) {
+        await updateSupervisor(supId, {
+          coordenacao: editCoordNome.trim(),
+          coordenacaoId: editingCoordenacao.id,
+        });
+      }
+
+      setEditingCoordenacao(null);
+      setCoordSuccessMsg(`Coordenação "${editCoordNome.trim()}" atualizada com sucesso!`);
+      setTimeout(() => setCoordSuccessMsg(''), 6000);
+    } catch {
+      alert('Erro ao atualizar coordenação no Firebase.');
+    } finally {
+      setIsSavingCoord(false);
+    }
+  };
+
+  const handleDeleteCoordenacao = async (coord: Coordenacao) => {
+    if (window.confirm(`Deseja realmente eliminar a "${coord.nome}"?\nOs supervisores associados continuarão registados no sistema.`)) {
+      for (const supId of coord.supervisorIds) {
+        await updateSupervisor(supId, {
+          coordenacao: 'Coordenação Geral Sumbe',
+          coordenacaoId: undefined,
+        });
+      }
+      await deleteCoordenacao(coord.id);
+      setCoordSuccessMsg(`Coordenação "${coord.nome}" eliminada com sucesso.`);
+      setTimeout(() => setCoordSuccessMsg(''), 6000);
     }
   };
 
@@ -577,6 +856,10 @@ export const AdminView: React.FC = () => {
     const totalFichas = Math.max(1, Number(newSupTotalFichas) || 25);
     const diasTrab = Math.max(1, Number(newSupDiasTrabalho) || 5);
 
+    const matchedCoord = coordenacoes.find(
+      (c) => c.nome.toLowerCase() === newSupCoordenacao.trim().toLowerCase()
+    );
+
     const created = await addSupervisor({
       codigo: code,
       nome: newSupNome.trim(),
@@ -584,11 +867,16 @@ export const AdminView: React.FC = () => {
       provincia: newSupProvincia || 'Cuanza-Sul',
       municipio: newSupMunicipio || 'Sumbe',
       comuna: newSupComuna || 'Sede',
-      coordenacao: newSupCoordenacao.trim() || 'Coordenação Geral Sumbe',
+      coordenacao: newSupCoordenacao.trim() || (coordenacoes[0]?.nome || 'Coordenação Sumbe Centro & Litoral'),
+      coordenacaoId: matchedCoord?.id,
       totalFichasPrevistas: totalFichas,
       diasTrabalhoPrevistos: diasTrab,
       ativo: true,
     });
+
+    if (matchedCoord && matchedCoord.supervisorIds.length < 2) {
+      await assignSupervisorToCoordenacao(matchedCoord.id, created.id);
+    }
 
     // Reset inputs
     setNewSupNome('');
@@ -600,7 +888,7 @@ export const AdminView: React.FC = () => {
     setShowAddSupervisorModal(false);
 
     alert(
-      `Supervisor "${created.nome}" gravado com sucesso no Firebase!\nCódigo de Acesso: ${created.codigo}\nComuna Base: ${created.comuna}\nMeta: ${totalFichas} fichas em ${diasTrab} dias de trabalho (~${Math.ceil(totalFichas / diasTrab)} fichas/dia)`
+      `Supervisor "${created.nome}" gravado com sucesso no Firebase!\nCódigo de Acesso: ${created.codigo}\nComuna Base: ${created.comuna}\nCoordenação: ${created.coordenacao}\nMeta: ${totalFichas} fichas em ${diasTrab} dias de trabalho (~${Math.ceil(totalFichas / diasTrab)} fichas/dia)`
     );
   };
 
@@ -676,9 +964,207 @@ export const AdminView: React.FC = () => {
   };
 
   return (
-    <div id="admin-view" className="flex flex-col md:flex-row h-screen bg-[#f1f5f9] overflow-hidden">
-      {/* SIDEBAR ADMINISTRATIVA */}
-      <aside className="w-full md:w-64 bg-[#1e293b] text-white flex flex-col shrink-0 border-r border-slate-700">
+    <div id="admin-view" className="flex flex-col md:flex-row min-h-screen md:h-screen bg-[#f1f5f9] md:overflow-hidden">
+      {/* ============================================================== */}
+      {/* DRAWER MOBILE OVERLAY (NÃO CORTA ECRÃ EM SMARTPHONES E TABLETS) */}
+      {/* ============================================================== */}
+      {isMobileMenuOpen && (
+        <div className="fixed inset-0 z-50 md:hidden flex">
+          <div
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs transition-opacity"
+            onClick={() => setIsMobileMenuOpen(false)}
+          ></div>
+          <div className="relative w-4/5 max-w-xs bg-[#1e293b] text-white flex flex-col h-full shadow-2xl z-10 animate-in slide-in-from-left duration-200">
+            <div className="p-4 border-b border-slate-700/80 flex items-center justify-between">
+              <div>
+                <div className="text-base font-black text-[#2667ff] tracking-tight flex items-center gap-2">
+                  <Building className="w-5 h-5 text-[#2667ff]" />
+                  <span>MS-Sumbe Admin</span>
+                </div>
+                <div className="text-[10px] text-slate-400 mt-0.5">Gestão de Mobilização Social</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsMobileMenuOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {!isReadOnly && (
+              <div className="p-3 space-y-2 border-b border-slate-700/80">
+                <button
+                  onClick={() => {
+                    setShowAddCoordenacaoModal(true);
+                    setIsMobileMenuOpen(false);
+                  }}
+                  className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-2 shadow-xs transition"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Cadastrar Coordenação</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setActiveScreen('formulario');
+                    setIsMobileMenuOpen(false);
+                  }}
+                  className="w-full bg-[#2667ff] hover:bg-[#1a53db] text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-2 shadow-xs transition"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Preencher Nova Ficha</span>
+                </button>
+              </div>
+            )}
+
+            <nav className="p-3 space-y-1 flex-1 overflow-y-auto">
+              <button
+                onClick={() => {
+                  setActiveTab('dashboard');
+                  setIsMobileMenuOpen(false);
+                }}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-semibold transition ${
+                  activeTab === 'dashboard'
+                    ? 'bg-slate-800 text-white border-l-4 border-l-[#2667ff]'
+                    : 'text-slate-300 hover:bg-slate-800'
+                }`}
+              >
+                <LayoutDashboard className="w-4 h-4" />
+                <span>Dashboard & Gráficos</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setActiveTab('diario');
+                  setIsMobileMenuOpen(false);
+                }}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-semibold transition ${
+                  activeTab === 'diario'
+                    ? 'bg-slate-800 text-white border-l-4 border-l-[#2667ff]'
+                    : 'text-slate-300 hover:bg-slate-800'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <CalendarDays className="w-4 h-4 text-emerald-400" />
+                  <span>Fichas por Dia & Metas</span>
+                </div>
+                <span className="text-[10px] bg-slate-900 text-emerald-400 px-2 py-0.5 rounded-full font-bold">
+                  {dailyAnalytics.sortedDates.length}d
+                </span>
+              </button>
+
+              {/* ABA COORDENAÇÕES (1 A 2 SUPERVISORES) */}
+              <button
+                onClick={() => {
+                  setActiveTab('coordenacoes');
+                  setIsMobileMenuOpen(false);
+                }}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-semibold transition ${
+                  activeTab === 'coordenacoes'
+                    ? 'bg-slate-800 text-white border-l-4 border-l-[#2667ff]'
+                    : 'text-slate-300 hover:bg-slate-800'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <Compass className="w-4 h-4 text-purple-400" />
+                  <span>Coordenações (1-2 Sup)</span>
+                </div>
+                <span className="text-[10px] bg-slate-900 text-purple-300 px-2 py-0.5 rounded-full font-bold">
+                  {coordenacoes.length}
+                </span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setActiveTab('supervisores');
+                  setIsMobileMenuOpen(false);
+                }}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-semibold transition ${
+                  activeTab === 'supervisores'
+                    ? 'bg-slate-800 text-white border-l-4 border-l-[#2667ff]'
+                    : 'text-slate-300 hover:bg-slate-800'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <Users className="w-4 h-4" />
+                  <span>Supervisores Cadastrados</span>
+                </div>
+                <span className="text-[10px] bg-slate-900 text-[#2667ff] px-2 py-0.5 rounded-full font-bold">
+                  {supervisores.length}
+                </span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setActiveTab('leitores');
+                  setIsMobileMenuOpen(false);
+                }}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-semibold transition ${
+                  activeTab === 'leitores'
+                    ? 'bg-slate-800 text-white border-l-4 border-l-[#2667ff]'
+                    : 'text-slate-300 hover:bg-slate-800'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <Eye className="w-4 h-4 text-sky-400" />
+                  <span>Utilizadores de Leitura</span>
+                </div>
+                <span className="text-[10px] bg-slate-900 text-sky-400 px-2 py-0.5 rounded-full font-bold">
+                  {leitores.length}
+                </span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setActiveTab('relatorios');
+                  setIsMobileMenuOpen(false);
+                }}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-semibold transition ${
+                  activeTab === 'relatorios'
+                    ? 'bg-slate-800 text-white border-l-4 border-l-[#2667ff]'
+                    : 'text-slate-300 hover:bg-slate-800'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <FileSpreadsheet className="w-4 h-4" />
+                  <span>Relatórios Enviados</span>
+                </div>
+                <span className="text-[10px] bg-slate-900 text-slate-300 px-2 py-0.5 rounded-full font-bold">
+                  {submissoes.length}
+                </span>
+              </button>
+
+              {!isReadOnly && (
+                <button
+                  onClick={() => {
+                    setActiveTab('configuracoes');
+                    setIsMobileMenuOpen(false);
+                  }}
+                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-semibold transition ${
+                    activeTab === 'configuracoes'
+                      ? 'bg-slate-800 text-white border-l-4 border-l-[#2667ff]'
+                      : 'text-slate-300 hover:bg-slate-800'
+                  }`}
+                >
+                  <Settings className="w-4 h-4" />
+                  <span>Definições & Firebase</span>
+                </button>
+              )}
+            </nav>
+
+            <div className="p-3 border-t border-slate-700/80 bg-slate-900/40 text-[10px] text-slate-400">
+              <div className="font-semibold text-slate-200">Município do Sumbe (Sede)</div>
+              <div className="text-emerald-400">Firebase Firestore Sincronizado</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* SIDEBAR DESKTOP FIXA (PARA ECRÃS MÉDIOS E GRANDES) */}
+      {/* ============================================================== */}
+      <aside className="hidden md:flex flex-col md:w-64 bg-[#1e293b] text-white shrink-0 border-r border-slate-700 h-full">
         <div className="p-4 border-b border-slate-700/80 flex items-center justify-between">
           <div>
             <div className="text-lg font-black text-[#2667ff] tracking-tight flex items-center gap-2">
@@ -689,9 +1175,18 @@ export const AdminView: React.FC = () => {
           </div>
         </div>
 
-        {/* BOTÃO PRINCIPAL DE PREENCHER FICHA NA SIDEBAR (Apenas Admin) */}
+        {/* BOTÕES DE AÇÃO PRINCIPAIS NA SIDEBAR */}
         {!isReadOnly && (
-          <div className="px-3 pt-3 pb-1">
+          <div className="px-3 pt-3 pb-1 space-y-2">
+            <button
+              onClick={() => setShowAddCoordenacaoModal(true)}
+              className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
+              title="Cadastrar nova coordenação (cada coordenação tem 1 a 2 supervisores)"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Cadastrar Coordenação</span>
+            </button>
+
             <button
               onClick={() => setActiveScreen('formulario')}
               className="w-full bg-[#2667ff] hover:bg-[#1a53db] text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
@@ -716,7 +1211,7 @@ export const AdminView: React.FC = () => {
             <span>Dashboard & Gráficos</span>
           </button>
 
-          {/* NOVO SEPARADOR: FICHAS POR DIA & METAS */}
+          {/* SEPARADOR: FICHAS POR DIA & METAS */}
           <button
             onClick={() => setActiveTab('diario')}
             className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition cursor-pointer ${
@@ -731,6 +1226,24 @@ export const AdminView: React.FC = () => {
             </div>
             <span className="text-xs bg-slate-900 text-emerald-400 px-2 py-0.5 rounded-full font-bold">
               {dailyAnalytics.sortedDates.length}d
+            </span>
+          </button>
+
+          {/* SEPARADOR: COORDENAÇÕES (1 A 2 SUPERVISORES) */}
+          <button
+            onClick={() => setActiveTab('coordenacoes')}
+            className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition cursor-pointer ${
+              activeTab === 'coordenacoes'
+                ? 'bg-slate-800 text-white border-l-4 border-l-[#2667ff]'
+                : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <Compass className="w-4 h-4 text-purple-400" />
+              <span>Coordenações (1-2 Sup)</span>
+            </div>
+            <span className="text-xs bg-slate-900 text-purple-300 px-2 py-0.5 rounded-full font-bold">
+              {coordenacoes.length}
             </span>
           </button>
 
@@ -751,7 +1264,6 @@ export const AdminView: React.FC = () => {
             </span>
           </button>
 
-          {/* NOVO SEPARADOR: UTILIZADORES SÓ DE LEITURA */}
           <button
             onClick={() => setActiveTab('leitores')}
             className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition cursor-pointer ${
@@ -819,60 +1331,145 @@ export const AdminView: React.FC = () => {
         </div>
       </aside>
 
-      {/* ÁREA PRINCIPAL DO ADMIN */}
+      {/* ============================================================== */}
+      {/* ÁREA PRINCIPAL DO ADMIN (TOTALMENTE RESPONSIVA) */}
+      {/* ============================================================== */}
       <main className="flex-1 flex flex-col h-full overflow-y-auto bg-slate-100">
-        {/* Top Header */}
-        <header className="bg-white border-b border-slate-200 px-5 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 sticky top-0 z-10 shadow-xs">
-          <div>
-            <h2 className="text-lg font-bold text-slate-800 leading-tight">
-              {activeTab === 'dashboard' && 'Visão Geral & Gráficos de Mobilização'}
-              {activeTab === 'diario' && 'Controlo Diário de Fichas Lançadas & Cumprimento de Metas'}
-              {activeTab === 'supervisores' && 'Supervisores Cadastrados, Códigos & Metas'}
-              {activeTab === 'leitores' && 'Utilizadores Só de Leitura (Consulta & Auditoria)'}
-              {activeTab === 'relatorios' && 'Fichas e Relatórios Recebidos no Firebase'}
-              {activeTab === 'configuracoes' && 'Definições da Base de Dados Firebase & Código de Acesso'}
-            </h2>
-            <p className="text-[11px] text-slate-500">
-              Município do Sumbe, Província do Cuanza-Sul &bull; Sincronização em tempo real
-            </p>
+        {/* Top Header Responsivo com Botão Hambúrguer e Botão Cadastrar Coordenação */}
+        <header className="bg-white border-b border-slate-200 px-4 sm:px-6 py-3 flex flex-col gap-2.5 sticky top-0 z-20 shadow-xs">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              {/* Botão Menu Mobile */}
+              <button
+                type="button"
+                onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+                className="md:hidden p-1.5 rounded-lg text-slate-700 hover:bg-slate-100 border border-slate-200 transition cursor-pointer"
+                title="Abrir Menu de Navegação"
+              >
+                {isMobileMenuOpen ? <X className="w-5 h-5 text-slate-900" /> : <Menu className="w-5 h-5 text-slate-900" />}
+              </button>
+
+              <div>
+                <h2 className="text-base sm:text-lg font-bold text-slate-900 leading-tight">
+                  {activeTab === 'dashboard' && 'Visão Geral & Gráficos de Mobilização'}
+                  {activeTab === 'diario' && 'Controlo Diário de Fichas Lançadas & Metas'}
+                  {activeTab === 'coordenacoes' && 'Coordenações do Sumbe (1 a 2 Supervisores)'}
+                  {activeTab === 'supervisores' && 'Supervisores Cadastrados, Códigos & Metas'}
+                  {activeTab === 'leitores' && 'Utilizadores Só de Leitura (Consulta & Auditoria)'}
+                  {activeTab === 'relatorios' && 'Fichas e Relatórios Recebidos no Firebase'}
+                  {activeTab === 'configuracoes' && 'Definições da Base de Dados Firebase & Código de Acesso'}
+                </h2>
+                <p className="text-[11px] text-slate-500 hidden sm:block">
+                  Município do Sumbe, Província do Cuanza-Sul &bull; Sincronização em tempo real
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              {/* BOTÃO SOLICITADO: CADASTRAR COORDENAÇÃO */}
+              {!isReadOnly && (
+                <button
+                  type="button"
+                  onClick={() => setShowAddCoordenacaoModal(true)}
+                  className="bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                  title="Cadastrar nova coordenação no Sumbe (cada coordenação tem 1 a 2 supervisores)"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Cadastrar Coordenação</span>
+                  <span className="sm:hidden">+ Coordenação</span>
+                </button>
+              )}
+
+              {!isReadOnly && (
+                <button
+                  type="button"
+                  onClick={() => setActiveScreen('formulario')}
+                  className="bg-[#2667ff] hover:bg-[#1a53db] text-white font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                  title="Abrir o formulário de preenchimento de fichas"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Preencher Ficha</span>
+                  <span className="sm:hidden">Ficha</span>
+                </button>
+              )}
+
+              {isReadOnly ? (
+                <div className="text-right hidden sm:block pl-2 border-l border-slate-200 text-xs">
+                  <div className="font-bold text-slate-700">{userSession?.nome}</div>
+                  <div className="text-[10px] text-sky-600 font-semibold flex items-center justify-end gap-1">
+                    <Eye className="w-3 h-3" />
+                    <span>Acesso de Consulta</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-right hidden lg:block pl-2 border-l border-slate-200 text-xs">
+                  <div className="font-bold text-slate-700">Coordenação Municipal</div>
+                  <div className="text-[10px] text-emerald-600 font-medium font-mono">Código: {adminCode}</div>
+                </div>
+              )}
+
+              <div className={`w-8 h-8 rounded-full ${isReadOnly ? 'bg-sky-600' : 'bg-[#2667ff]'} text-white font-bold flex items-center justify-center text-xs shadow-xs shrink-0`}>
+                {isReadOnly ? 'LT' : 'AD'}
+              </div>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2.5">
-            {/* Indicador Firebase */}
-            <div className="hidden md:flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 text-emerald-700 px-2.5 py-1 rounded-full text-[11px] font-semibold">
-              <Database className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Base de Dados Firebase</span>
-            </div>
-
-            {!isReadOnly && (
-              <button
-                onClick={() => setActiveScreen('formulario')}
-                className="bg-[#2667ff] hover:bg-[#1a53db] text-white font-bold text-xs px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 shadow-xs transition cursor-pointer"
-                title="Abrir o formulário de preenchimento de fichas"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Preencher Ficha</span>
-              </button>
-            )}
-
-            {isReadOnly ? (
-              <div className="text-right hidden sm:block pl-2 border-l border-slate-200 text-xs">
-                <div className="font-bold text-slate-700">{userSession?.nome}</div>
-                <div className="text-[10px] text-sky-600 font-semibold flex items-center justify-end gap-1">
-                  <Eye className="w-3 h-3" />
-                  <span>Acesso de Consulta</span>
-                </div>
-              </div>
-            ) : (
-              <div className="text-right hidden sm:block pl-2 border-l border-slate-200 text-xs">
-                <div className="font-bold text-slate-700">Coordenação Municipal</div>
-                <div className="text-[10px] text-emerald-600 font-medium font-mono">Código: {adminCode}</div>
-              </div>
-            )}
-
-            <div className={`w-8 h-8 rounded-full ${isReadOnly ? 'bg-sky-600' : 'bg-[#2667ff]'} text-white font-bold flex items-center justify-center text-xs shadow-xs`}>
-              {isReadOnly ? 'LT' : 'AD'}
-            </div>
+          {/* FITA HORIZONTAL RESPONSIVA DE ABAS (PERMITE NAVEGAÇÃO RÁPIDA EM QUALQUER DISPOSITIVO) */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 pt-0.5 text-xs border-t border-slate-100 scrollbar-none">
+            <button
+              onClick={() => setActiveTab('dashboard')}
+              className={`px-3 py-1 rounded-md font-semibold whitespace-nowrap transition cursor-pointer ${
+                activeTab === 'dashboard' ? 'bg-[#2667ff] text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              Dashboard
+            </button>
+            <button
+              onClick={() => setActiveTab('diario')}
+              className={`px-3 py-1 rounded-md font-semibold whitespace-nowrap transition cursor-pointer ${
+                activeTab === 'diario' ? 'bg-[#2667ff] text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              Fichas por Dia ({dailyAnalytics.sortedDates.length}d)
+            </button>
+            <button
+              onClick={() => setActiveTab('coordenacoes')}
+              className={`px-3 py-1 rounded-md font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'coordenacoes'
+                  ? 'bg-purple-600 text-white shadow-xs'
+                  : 'text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200'
+              }`}
+            >
+              <Compass className="w-3.5 h-3.5" />
+              <span>Coordenações</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${activeTab === 'coordenacoes' ? 'bg-purple-800 text-white' : 'bg-purple-200 text-purple-900'}`}>
+                {coordenacoes.length}
+              </span>
+            </button>
+            <button
+              onClick={() => setActiveTab('supervisores')}
+              className={`px-3 py-1 rounded-md font-semibold whitespace-nowrap transition cursor-pointer ${
+                activeTab === 'supervisores' ? 'bg-[#2667ff] text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              Supervisores ({supervisores.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('leitores')}
+              className={`px-3 py-1 rounded-md font-semibold whitespace-nowrap transition cursor-pointer ${
+                activeTab === 'leitores' ? 'bg-[#2667ff] text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              Leitores ({leitores.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('relatorios')}
+              className={`px-3 py-1 rounded-md font-semibold whitespace-nowrap transition cursor-pointer ${
+                activeTab === 'relatorios' ? 'bg-[#2667ff] text-white shadow-xs' : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              Relatórios ({submissoes.length})
+            </button>
           </div>
         </header>
 
@@ -943,26 +1540,51 @@ export const AdminView: React.FC = () => {
                   <div>
                     <div className="flex items-center gap-2">
                       <h4 className="font-bold text-sm sm:text-base text-white">
-                        Controlo Diário de Lançamentos por Supervisor (Campanha +5 Dias)
+                        Controlo Diário de Fichas por Supervisor & Coordenação
                       </h4>
                       <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-bold px-2 py-0.5 rounded border border-emerald-400/30">
                         {dailyAnalytics.sortedDates.length} Dias Registados
                       </span>
                     </div>
                     <p className="text-xs text-slate-300 mt-1 max-w-2xl">
-                      Acompanhe dia a dia o cumprimento das metas: total de <strong>{dailyAnalytics.totalGeralLancado} de {dailyAnalytics.totalGeralPrevisto} fichas</strong> lançadas ({dailyAnalytics.taxaGlobalCumprimento}% da meta global). Veja a matriz detalhada de quantas fichas cada supervisor lançou em cada dia.
+                      Acompanhe dia a dia o cumprimento das metas: total de <strong>{dailyAnalytics.totalGeralLancado} de {dailyAnalytics.totalGeralPrevisto} fichas</strong> lançadas ({dailyAnalytics.taxaGlobalCumprimento}% da meta global). Veja a matriz detalhada de quantas fichas cada supervisor e cada coordenação lançou em cada dia.
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0 w-full md:w-auto">
+                <div className="flex items-center gap-2 shrink-0 flex-wrap w-full md:w-auto">
                   <button
                     type="button"
-                    onClick={() => setActiveTab('diario')}
-                    className="w-full md:w-auto bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-2 px-4 rounded-lg flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
+                    onClick={() => {
+                      setActiveTab('diario');
+                      setDiarioSubView('supervisores');
+                    }}
+                    className="w-full sm:w-auto bg-[#2667ff] hover:bg-[#1a53db] text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 shadow-sm transition cursor-pointer"
                   >
-                    <Calendar className="w-3.5 h-3.5" />
-                    <span>Ver Fichas por Dia & Metas</span>
+                    <Users className="w-3.5 h-3.5" />
+                    <span>Fichas por Supervisor</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab('diario');
+                      setDiarioSubView('coordenacoes');
+                    }}
+                    className="w-full sm:w-auto bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 shadow-sm transition cursor-pointer"
+                  >
+                    <Compass className="w-3.5 h-3.5" />
+                    <span>Fichas por Coordenação</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab('diario');
+                      setDiarioSubView('explorador');
+                    }}
+                    className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 shadow-sm transition cursor-pointer"
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>Explorar Fichas</span>
                   </button>
                 </div>
               </div>
@@ -1714,8 +2336,18 @@ export const AdminView: React.FC = () => {
                             <td className="py-3 px-4 text-slate-600 text-xs">
                               {sub.municipio} / <span className="font-medium text-slate-800">{comunasText || 'Sede'}</span>
                             </td>
-                            <td className="py-3 px-4 text-slate-600 text-xs max-w-[200px] truncate" title={bairrosText}>
-                              {bairrosText}
+                            <td className="py-3 px-4 text-slate-700 text-xs max-w-xs">
+                              <div className="flex flex-wrap gap-1">
+                                {sub.fichas.map((f, i) => (
+                                  <span
+                                    key={i}
+                                    className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded text-[11px] font-medium border border-slate-200"
+                                    title={`Bairro: ${f.bairro} (${f.comuna})`}
+                                  >
+                                    {f.bairro}
+                                  </span>
+                                ))}
+                              </div>
                             </td>
                             <td className="py-3 px-4 font-bold text-[#2667ff]">
                               {sub.totalPessoas.toLocaleString('pt-PT')}
@@ -1840,205 +2472,725 @@ export const AdminView: React.FC = () => {
                 </div>
               </div>
 
-              {/* MATRIZ DIÁRIA: TABELA COMPLETA DE SUPERVISORES POR DIA DE TRABALHO */}
-              <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
-                <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div>
-                    <h4 className="font-bold text-slate-800 text-base flex items-center gap-2">
-                      <Target className="w-5 h-5 text-[#2667ff]" />
-                      <span>Matriz de Desempenho Diário dos Supervisores</span>
-                    </h4>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Visualização individual: quantas fichas cada coordenador lançou em cada dia específico de trabalho
-                    </p>
-                  </div>
-                  <div className="text-xs text-slate-500 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-                    <span>Verde: meta diária atingida</span>
-                    <span className="w-2.5 h-2.5 rounded-full bg-[#2667ff] ml-2"></span>
-                    <span>Azul: com lançamentos</span>
-                  </div>
+              {/* SELETOR DE MODO DE VISUALIZAÇÃO DIÁRIA: POR SUPERVISOR, POR COORDENAÇÃO OU EXPLORADOR DE FICHAS POR DIA */}
+              <div className="bg-white p-3.5 sm:p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-lg overflow-x-auto">
+                  <button
+                    type="button"
+                    onClick={() => setDiarioSubView('supervisores')}
+                    className={`px-3 py-1.5 rounded-md text-xs font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                      diarioSubView === 'supervisores'
+                        ? 'bg-[#2667ff] text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200'
+                    }`}
+                  >
+                    <Users className="w-3.5 h-3.5" />
+                    <span>Por Supervisor ({supervisores.length})</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setDiarioSubView('coordenacoes')}
+                    className={`px-3 py-1.5 rounded-md text-xs font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                      diarioSubView === 'coordenacoes'
+                        ? 'bg-purple-600 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200'
+                    }`}
+                  >
+                    <Compass className="w-3.5 h-3.5" />
+                    <span>Por Coordenação ({coordenacoes.length})</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setDiarioSubView('explorador')}
+                    className={`px-3 py-1.5 rounded-md text-xs font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                      diarioSubView === 'explorador'
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200'
+                    }`}
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>Ver Fichas por Dia ({submissoes.reduce((acc, s) => acc + (s.fichas?.length || 0), 0)} fichas)</span>
+                  </button>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs border-collapse">
-                    <thead className="bg-slate-50 text-slate-700 font-semibold uppercase tracking-wider border-b border-slate-200">
-                      <tr>
-                        <th className="py-3 px-3 w-10 text-center">#</th>
-                        <th className="py-3 px-3 min-w-[170px]">Supervisor</th>
-                        <th className="py-3 px-3 text-center min-w-[100px]">Meta Campanha</th>
-                        <th className="py-3 px-3 text-center min-w-[85px]">Meta/Dia</th>
+                <div className="flex items-center gap-2 self-start md:self-center text-xs">
+                  {(diarioFiltroData !== 'todas' || diarioFiltroSupervisor !== 'todos' || diarioFiltroCoordenacao !== 'todas') && (
+                    <div className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 text-[#1a53db] px-2.5 py-1 rounded-lg font-semibold">
+                      <span>Filtro Ativo:</span>
+                      {diarioFiltroData !== 'todas' && <span className="underline">{diarioFiltroData}</span>}
+                      {diarioFiltroSupervisor !== 'todos' && (
+                        <span>&bull; {supervisores.find((s) => s.id === diarioFiltroSupervisor)?.nome?.split(' ')[0]}</span>
+                      )}
+                      {diarioFiltroCoordenacao !== 'todas' && (
+                        <span>&bull; {coordenacoes.find((c) => c.id === diarioFiltroCoordenacao)?.nome}</span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDiarioFiltroData('todas');
+                          setDiarioFiltroSupervisor('todos');
+                          setDiarioFiltroCoordenacao('todas');
+                        }}
+                        className="text-red-600 hover:underline ml-1 font-bold cursor-pointer"
+                        title="Limpar todos os filtros diários"
+                      >
+                        &times;
+                      </button>
+                    </div>
+                  )}
+                  <span className="text-slate-400 hidden sm:inline">&bull;</span>
+                  <span className="text-slate-500 text-[11px] hidden sm:inline">
+                    Clique em qualquer número de fichas para ver as submissões detalhadas daquele dia
+                  </span>
+                </div>
+              </div>
 
-                        {/* Colunas Dinâmicas para Cada Data / Dia Registado */}
-                        {dailyAnalytics.sortedDates.map((d) => {
-                          const info = dailyAnalytics.dateLabels[d];
+              {/* VISTA 1: MATRIZ DIÁRIA POR SUPERVISOR */}
+              {diarioSubView === 'supervisores' && (
+                <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+                  <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <h4 className="font-bold text-slate-800 text-base flex items-center gap-2">
+                        <Target className="w-5 h-5 text-[#2667ff]" />
+                        <span>Matriz Diária: Fichas Lançadas por Supervisor</span>
+                      </h4>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Acompanhamento dia a dia: quantas fichas cada supervisor lançou em cada data da campanha no Sumbe.
+                      </p>
+                    </div>
+                    <div className="text-xs text-slate-500 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg flex items-center gap-2 flex-wrap">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                      <span>Verde: meta diária atingida</span>
+                      <span className="w-2.5 h-2.5 rounded-full bg-[#2667ff] ml-2"></span>
+                      <span>Azul: com lançamentos</span>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead className="bg-slate-50 text-slate-700 font-semibold uppercase tracking-wider border-b border-slate-200">
+                        <tr>
+                          <th className="py-3 px-3 w-10 text-center">#</th>
+                          <th className="py-3 px-3 min-w-[170px]">Supervisor</th>
+                          <th className="py-3 px-3 text-center min-w-[100px]">Meta Campanha</th>
+                          <th className="py-3 px-3 text-center min-w-[85px]">Meta/Dia</th>
+
+                          {/* Colunas Dinâmicas para Cada Data / Dia Registado */}
+                          {dailyAnalytics.sortedDates.map((d) => {
+                            const info = dailyAnalytics.dateLabels[d];
+                            return (
+                              <th key={d} className="py-3 px-3 text-center bg-blue-50/40 border-l border-slate-200 min-w-[95px]">
+                                <div className="font-bold text-[#1a53db]">{info?.label || d}</div>
+                                <div className="text-[10px] text-slate-400 font-normal lowercase">{d}</div>
+                              </th>
+                            );
+                          })}
+
+                          <th className="py-3 px-3 text-center bg-slate-100 border-l border-slate-200 font-bold min-w-[100px]">
+                            Total Lançado
+                          </th>
+                          <th className="py-3 px-3 text-center min-w-[140px]">% Meta</th>
+                          <th className="py-3 px-3 text-right min-w-[100px]">Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {dailyAnalytics.supervisorMatrix.map((item, idx) => {
+                          const sup = item.supervisor;
                           return (
-                            <th key={d} className="py-3 px-3 text-center bg-blue-50/40 border-l border-slate-200 min-w-[95px]">
-                              <div className="font-bold text-[#1a53db]">{info?.label || d}</div>
-                              <div className="text-[10px] text-slate-400 font-normal lowercase">{d}</div>
-                            </th>
+                            <tr key={sup.id} className="hover:bg-slate-50 transition">
+                              <td className="py-2.5 px-3 text-center font-mono font-bold text-slate-400">
+                                #{idx + 1}
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <div className="font-bold text-slate-900">{sup.nome}</div>
+                                <div className="text-[11px] text-slate-500 font-mono flex items-center gap-1.5">
+                                  <span className="text-[#2667ff] font-bold">{sup.codigo}</span>
+                                  <span>&bull; {sup.comuna}</span>
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3 text-center font-semibold text-slate-700">
+                                <span className="bg-slate-100 px-2 py-1 rounded font-mono font-bold">
+                                  {item.totalPrevisto} fichas
+                                </span>
+                                <div className="text-[10px] text-slate-400 mt-0.5">
+                                  em {item.diasPrevistos} dias
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3 text-center font-semibold text-slate-600">
+                                <span className="font-mono text-slate-800">
+                                  ~{item.metaDiaria}/dia
+                                </span>
+                              </td>
+
+                              {/* Fichas Lançadas em Cada Dia de Trabalho */}
+                              {dailyAnalytics.sortedDates.map((d) => {
+                                const fichasNoDia = item.fichasPorData[d] || 0;
+                                const pessoasNoDia = item.pessoasPorData[d] || 0;
+                                const atingiuMeta = fichasNoDia >= item.metaDiaria && item.metaDiaria > 0;
+
+                                return (
+                                  <td key={d} className="py-2.5 px-3 text-center border-l border-slate-100">
+                                    {fichasNoDia > 0 ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleVerFichasDoDia(d, sup.id, undefined)}
+                                        className={`inline-flex flex-col items-center justify-center px-2 py-1 rounded-lg border font-mono font-bold text-xs cursor-pointer hover:scale-105 transition shadow-2xs ${
+                                          atingiuMeta
+                                            ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
+                                            : 'bg-blue-50 text-[#1a53db] border-blue-200 hover:bg-blue-100'
+                                        }`}
+                                        title={`Ver as ${fichasNoDia} ficha(s) enviadas neste dia por ${sup.nome}`}
+                                      >
+                                        <span>{fichasNoDia} {fichasNoDia === 1 ? 'ficha' : 'fichas'}</span>
+                                        <span className="text-[9px] font-normal text-slate-500">
+                                          {pessoasNoDia} pess.
+                                        </span>
+                                      </button>
+                                    ) : (
+                                      <span className="text-slate-300 font-mono text-xs">-</span>
+                                    )}
+                                  </td>
+                                );
+                              })}
+
+                              {/* Total Acumulado */}
+                              <td className="py-2.5 px-3 text-center bg-slate-50 border-l border-slate-200">
+                                <span className="font-mono font-black text-sm text-[#1a53db]">
+                                  {item.totalFichasLancadas}
+                                </span>
+                                <div className="text-[10px] text-slate-500">
+                                  {item.totalPessoasLancadas.toLocaleString('pt-PT')} pess.
+                                </div>
+                              </td>
+
+                              {/* Progresso vs Meta */}
+                              <td className="py-2.5 px-3">
+                                <div className="space-y-1">
+                                  <div className="flex items-center justify-between text-[11px]">
+                                    <span className="font-bold font-mono text-slate-800">
+                                      {item.percentualStr}
+                                    </span>
+                                    <span className="text-slate-400 text-[10px]">
+                                      {item.totalFichasLancadas}/{item.totalPrevisto}
+                                    </span>
+                                  </div>
+                                  <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                                    <div
+                                      className={`h-full rounded-full transition-all duration-500 ${
+                                        item.percentualCumprido >= 100
+                                          ? 'bg-emerald-500'
+                                          : item.percentualCumprido >= 50
+                                          ? 'bg-[#2667ff]'
+                                          : 'bg-amber-500'
+                                      }`}
+                                      style={{ width: `${Math.min(100, item.percentualCumprido)}%` }}
+                                    ></div>
+                                  </div>
+                                </div>
+                              </td>
+
+                              {/* Ações */}
+                              <td className="py-2.5 px-3 text-right">
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleVerFichasDoDia(undefined, sup.id, undefined)}
+                                    className="text-emerald-700 hover:text-emerald-900 hover:bg-emerald-50 p-1.5 rounded transition cursor-pointer text-[11px] font-semibold inline-flex items-center gap-1"
+                                    title="Ver todas as fichas enviadas por este supervisor"
+                                  >
+                                    <FileText className="w-3.5 h-3.5" />
+                                    <span>Fichas</span>
+                                  </button>
+                                  {!isReadOnly && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenEditTarget(sup)}
+                                      className="text-[#2667ff] hover:text-[#1a53db] hover:bg-blue-50 p-1.5 rounded transition cursor-pointer text-[11px] font-semibold inline-flex items-center gap-1"
+                                      title="Ajustar total de fichas ou dias previstos"
+                                    >
+                                      <Edit3 className="w-3.5 h-3.5" />
+                                      <span>Metas</span>
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
                           );
                         })}
+                      </tbody>
 
-                        <th className="py-3 px-3 text-center bg-slate-100 border-l border-slate-200 font-bold min-w-[100px]">
-                          Total Lançado
-                        </th>
-                        <th className="py-3 px-3 text-center min-w-[140px]">% Meta</th>
-                        {!isReadOnly && <th className="py-3 px-3 text-right min-w-[90px]">Ações</th>}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {dailyAnalytics.supervisorMatrix.map((item, idx) => {
-                        const sup = item.supervisor;
-                        return (
-                          <tr key={sup.id} className="hover:bg-slate-50 transition">
-                            <td className="py-2.5 px-3 text-center font-mono font-bold text-slate-400">
-                              #{idx + 1}
-                            </td>
-                            <td className="py-2.5 px-3">
-                              <div className="font-bold text-slate-900">{sup.nome}</div>
-                              <div className="text-[11px] text-slate-500 font-mono flex items-center gap-1.5">
-                                <span className="text-[#2667ff] font-bold">{sup.codigo}</span>
-                                <span>&bull; {sup.comuna}</span>
-                              </div>
-                            </td>
-                            <td className="py-2.5 px-3 text-center font-semibold text-slate-700">
-                              <span className="bg-slate-100 px-2 py-1 rounded font-mono font-bold">
-                                {item.totalPrevisto} fichas
-                              </span>
-                              <div className="text-[10px] text-slate-400 mt-0.5">
-                                em {item.diasPrevistos} dias
-                              </div>
-                            </td>
-                            <td className="py-2.5 px-3 text-center font-semibold text-slate-600">
-                              <span className="font-mono text-slate-800">
-                                ~{item.metaDiaria}/dia
-                              </span>
-                            </td>
+                      {/* Linha de Totais Gerais por Dia */}
+                      <tfoot className="bg-slate-100 text-slate-800 font-bold border-t-2 border-slate-300">
+                        <tr>
+                          <td colSpan={4} className="py-3 px-4 uppercase tracking-wider text-xs font-black text-slate-700">
+                            Total Geral de Fichas por Dia (Sumbe):
+                          </td>
 
-                            {/* Fichas Lançadas em Cada Dia de Trabalho */}
-                            {dailyAnalytics.sortedDates.map((d) => {
-                              const fichasNoDia = item.fichasPorData[d] || 0;
-                              const pessoasNoDia = item.pessoasPorData[d] || 0;
-                              const atingiuMeta = fichasNoDia >= item.metaDiaria && item.metaDiaria > 0;
+                          {/* Soma de cada dia */}
+                          {dailyAnalytics.sortedDates.map((d) => {
+                            const tot = dailyAnalytics.totalsByDate[d] || { totalFichas: 0, totalPessoas: 0, supervisoresAtivos: 0 };
+                            return (
+                              <td key={d} className="py-3 px-3 text-center border-l border-slate-200 bg-blue-100/60">
+                                <div className="font-mono font-black text-sm text-[#1a53db]">
+                                  {tot.totalFichas} fichas
+                                </div>
+                                <div className="text-[10px] text-slate-500 font-normal">
+                                  {tot.totalPessoas.toLocaleString('pt-PT')} pess. ({tot.supervisoresAtivos} sup.)
+                                </div>
+                              </td>
+                            );
+                          })}
 
-                              return (
-                                <td key={d} className="py-2.5 px-3 text-center border-l border-slate-100">
-                                  {fichasNoDia > 0 ? (
-                                    <div
-                                      className={`inline-flex flex-col items-center justify-center px-2 py-1 rounded-lg border font-mono font-bold text-xs ${
-                                        atingiuMeta
-                                          ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
-                                          : 'bg-blue-50 text-[#1a53db] border-blue-200'
-                                      }`}
-                                      title={`${fichasNoDia} ficha(s) lançada(s) & ${pessoasNoDia.toLocaleString('pt-PT')} pessoas mobilizadas`}
-                                    >
-                                      <span>{fichasNoDia} {fichasNoDia === 1 ? 'ficha' : 'fichas'}</span>
-                                      <span className="text-[9px] font-normal text-slate-500">
-                                        {pessoasNoDia} pess.
+                          <td className="py-3 px-3 text-center bg-slate-200/80 border-l border-slate-300">
+                            <div className="font-mono font-black text-base text-[#1b4fd8]">
+                              {dailyAnalytics.totalGeralLancado}
+                            </div>
+                            <div className="text-[10px] text-slate-600 font-semibold uppercase">Total Fichas</div>
+                          </td>
+
+                          <td className="py-3 px-3 text-center font-mono font-bold text-slate-800">
+                            {dailyAnalytics.taxaGlobalCumprimento}% global
+                          </td>
+
+                          <td></td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* VISTA 2: MATRIZ DIÁRIA POR COORDENAÇÃO (1 A 2 SUPERVISORES POR COORDENAÇÃO) */}
+              {diarioSubView === 'coordenacoes' && (
+                <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+                  <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <h4 className="font-bold text-slate-800 text-base flex items-center gap-2">
+                        <Compass className="w-5 h-5 text-purple-600" />
+                        <span>Matriz Diária: Fichas Lançadas por Coordenação</span>
+                      </h4>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Acompanhamento territorial dia a dia: cada coordenação mobiliza 1 a 2 supervisores no Sumbe.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs bg-purple-50 text-purple-800 border border-purple-200 font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5">
+                        <Compass className="w-3.5 h-3.5 text-purple-600" />
+                        <span>{dailyAnalytics.coordenacaoMatrix.length} Coordenações Ativas</span>
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead className="bg-slate-50 text-slate-700 font-semibold uppercase tracking-wider border-b border-slate-200">
+                        <tr>
+                          <th className="py-3 px-3 w-10 text-center">#</th>
+                          <th className="py-3 px-3 min-w-[190px]">Coordenação</th>
+                          <th className="py-3 px-3 min-w-[200px]">Supervisores Vinculados</th>
+                          <th className="py-3 px-3 text-center min-w-[95px]">Meta Total</th>
+
+                          {/* Colunas Dinâmicas de Cada Data */}
+                          {dailyAnalytics.sortedDates.map((d) => {
+                            const info = dailyAnalytics.dateLabels[d];
+                            return (
+                              <th key={d} className="py-3 px-3 text-center bg-purple-50/50 border-l border-slate-200 min-w-[95px]">
+                                <div className="font-bold text-purple-900">{info?.label || d}</div>
+                                <div className="text-[10px] text-slate-400 font-normal lowercase">{d}</div>
+                              </th>
+                            );
+                          })}
+
+                          <th className="py-3 px-3 text-center bg-slate-100 border-l border-slate-200 font-bold min-w-[100px]">
+                            Total Lançado
+                          </th>
+                          <th className="py-3 px-3 text-center min-w-[140px]">% Meta</th>
+                          <th className="py-3 px-3 text-right min-w-[90px]">Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {dailyAnalytics.coordenacaoMatrix.map((item, idx) => {
+                          const coord = item.coordenacao;
+                          return (
+                            <tr key={coord.id} className="hover:bg-slate-50 transition">
+                              <td className="py-2.5 px-3 text-center font-mono font-bold text-slate-400">
+                                #{idx + 1}
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <div className="font-bold text-slate-900">{coord.nome}</div>
+                                <div className="text-[11px] text-slate-500">
+                                  {coord.municipio} &bull; {coord.comuna}
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <div className="flex flex-wrap gap-1">
+                                  {item.supervisores.length > 0 ? (
+                                    item.supervisores.map((sup) => (
+                                      <span
+                                        key={sup.id}
+                                        className="bg-blue-50 text-[#1a53db] border border-blue-200 px-2 py-0.5 rounded text-[11px] font-semibold"
+                                        title={`Supervisor: ${sup.nome} (${sup.codigo})`}
+                                      >
+                                        {sup.nome.split(' ')[0]} ({sup.codigo})
                                       </span>
-                                    </div>
+                                    ))
                                   ) : (
-                                    <span className="text-slate-300 font-mono text-xs">-</span>
+                                    <span className="text-slate-400 italic text-[11px]">Sem supervisores vinculados</span>
                                   )}
-                                </td>
-                              );
-                            })}
-
-                            {/* Total Acumulado */}
-                            <td className="py-2.5 px-3 text-center bg-slate-50 border-l border-slate-200">
-                              <span className="font-mono font-black text-sm text-[#1a53db]">
-                                {item.totalFichasLancadas}
-                              </span>
-                              <div className="text-[10px] text-slate-500">
-                                {item.totalPessoasLancadas.toLocaleString('pt-PT')} pess.
-                              </div>
-                            </td>
-
-                            {/* Progresso vs Meta */}
-                            <td className="py-2.5 px-3">
-                              <div className="space-y-1">
-                                <div className="flex items-center justify-between text-[11px]">
-                                  <span className="font-bold font-mono text-slate-800">
-                                    {item.percentualStr}
-                                  </span>
-                                  <span className="text-slate-400 text-[10px]">
-                                    {item.totalFichasLancadas}/{item.totalPrevisto}
-                                  </span>
                                 </div>
-                                <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-                                  <div
-                                    className={`h-full rounded-full transition-all duration-500 ${
-                                      item.percentualCumprido >= 100
-                                        ? 'bg-emerald-500'
-                                        : item.percentualCumprido >= 50
-                                        ? 'bg-[#2667ff]'
-                                        : 'bg-amber-500'
-                                    }`}
-                                    style={{ width: `${Math.min(100, item.percentualCumprido)}%` }}
-                                  ></div>
-                                </div>
-                              </div>
-                            </td>
+                              </td>
+                              <td className="py-2.5 px-3 text-center font-semibold text-slate-700">
+                                <span className="bg-slate-100 px-2 py-1 rounded font-mono font-bold">
+                                  {item.totalPrevisto} fichas
+                                </span>
+                              </td>
 
-                            {/* Ação Editar Meta */}
-                            {!isReadOnly && (
+                              {/* Fichas Lançadas por Data para esta Coordenação */}
+                              {dailyAnalytics.sortedDates.map((d) => {
+                                const fichasNoDia = item.fichasPorData[d] || 0;
+                                const pessoasNoDia = item.pessoasPorData[d] || 0;
+
+                                return (
+                                  <td key={d} className="py-2.5 px-3 text-center border-l border-slate-100">
+                                    {fichasNoDia > 0 ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleVerFichasDoDia(d, undefined, coord.id)}
+                                        className="inline-flex flex-col items-center justify-center px-2 py-1 rounded-lg border font-mono font-bold text-xs bg-purple-50 text-purple-900 border-purple-200 hover:bg-purple-100 cursor-pointer transition shadow-2xs"
+                                        title={`Ver as ${fichasNoDia} ficha(s) da coordenação ${coord.nome} nesta data`}
+                                      >
+                                        <span>{fichasNoDia} {fichasNoDia === 1 ? 'ficha' : 'fichas'}</span>
+                                        <span className="text-[9px] font-normal text-purple-700">
+                                          {pessoasNoDia} pess.
+                                        </span>
+                                      </button>
+                                    ) : (
+                                      <span className="text-slate-300 font-mono text-xs">-</span>
+                                    )}
+                                  </td>
+                                );
+                              })}
+
+                              {/* Total Acumulado */}
+                              <td className="py-2.5 px-3 text-center bg-slate-50 border-l border-slate-200">
+                                <span className="font-mono font-black text-sm text-purple-900">
+                                  {item.totalFichasLancadas}
+                                </span>
+                                <div className="text-[10px] text-slate-500">
+                                  {item.totalPessoasLancadas.toLocaleString('pt-PT')} pess.
+                                </div>
+                              </td>
+
+                              {/* % Meta */}
+                              <td className="py-2.5 px-3">
+                                <div className="space-y-1">
+                                  <div className="flex items-center justify-between text-[11px]">
+                                    <span className="font-bold font-mono text-slate-800">
+                                      {item.percentualStr}
+                                    </span>
+                                    <span className="text-slate-400 text-[10px]">
+                                      {item.totalFichasLancadas}/{item.totalPrevisto}
+                                    </span>
+                                  </div>
+                                  <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                                    <div
+                                      className={`h-full rounded-full transition-all duration-500 ${
+                                        item.percentualCumprido >= 100
+                                          ? 'bg-emerald-500'
+                                          : item.percentualCumprido >= 50
+                                          ? 'bg-purple-600'
+                                          : 'bg-amber-500'
+                                      }`}
+                                      style={{ width: `${Math.min(100, item.percentualCumprido)}%` }}
+                                    ></div>
+                                  </div>
+                                </div>
+                              </td>
+
+                              {/* Ações */}
                               <td className="py-2.5 px-3 text-right">
                                 <button
                                   type="button"
-                                  onClick={() => handleOpenEditTarget(sup)}
-                                  className="text-[#2667ff] hover:text-[#1a53db] hover:bg-blue-50 p-1.5 rounded transition cursor-pointer text-[11px] font-semibold inline-flex items-center gap-1"
-                                  title="Ajustar total de fichas ou dias previstos"
+                                  onClick={() => handleVerFichasDoDia(undefined, undefined, coord.id)}
+                                  className="text-purple-700 hover:text-purple-900 hover:bg-purple-50 p-1.5 rounded transition cursor-pointer text-[11px] font-semibold inline-flex items-center gap-1"
+                                  title="Ver todas as fichas desta coordenação"
                                 >
-                                  <Edit3 className="w-3.5 h-3.5" />
-                                  <span>Metas</span>
+                                  <FileText className="w-3.5 h-3.5" />
+                                  <span>Ver Fichas</span>
                                 </button>
                               </td>
-                            )}
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-
-                    {/* Linha de Totais Gerais por Dia */}
-                    <tfoot className="bg-slate-100 text-slate-800 font-bold border-t-2 border-slate-300">
-                      <tr>
-                        <td colSpan={4} className="py-3 px-4 uppercase tracking-wider text-xs font-black text-slate-700">
-                          Total Geral de Fichas por Dia (Sumbe):
-                        </td>
-
-                        {/* Soma de cada dia */}
-                        {dailyAnalytics.sortedDates.map((d) => {
-                          const tot = dailyAnalytics.totalsByDate[d] || { totalFichas: 0, totalPessoas: 0, supervisoresAtivos: 0 };
-                          return (
-                            <td key={d} className="py-3 px-3 text-center border-l border-slate-200 bg-blue-100/60">
-                              <div className="font-mono font-black text-sm text-[#1a53db]">
-                                {tot.totalFichas} fichas
-                              </div>
-                              <div className="text-[10px] text-slate-500 font-normal">
-                                {tot.totalPessoas.toLocaleString('pt-PT')} pess. ({tot.supervisoresAtivos} sup.)
-                              </div>
-                            </td>
+                            </tr>
                           );
                         })}
+                      </tbody>
 
-                        <td className="py-3 px-3 text-center bg-slate-200/80 border-l border-slate-300">
-                          <div className="font-mono font-black text-base text-[#1b4fd8]">
-                            {dailyAnalytics.totalGeralLancado}
-                          </div>
-                          <div className="text-[10px] text-slate-600 font-semibold uppercase">Total Fichas</div>
-                        </td>
+                      {/* Totais Gerais das Coordenações */}
+                      <tfoot className="bg-purple-50/70 text-slate-800 font-bold border-t-2 border-purple-200">
+                        <tr>
+                          <td colSpan={4} className="py-3 px-4 uppercase tracking-wider text-xs font-black text-purple-950">
+                            Total Geral das Coordenações por Dia:
+                          </td>
 
-                        <td className="py-3 px-3 text-center font-mono font-bold text-slate-800">
-                          {dailyAnalytics.taxaGlobalCumprimento}% global
-                        </td>
+                          {dailyAnalytics.sortedDates.map((d) => {
+                            const tot = dailyAnalytics.totalsByDate[d] || { totalFichas: 0, totalPessoas: 0, supervisoresAtivos: 0 };
+                            return (
+                              <td key={d} className="py-3 px-3 text-center border-l border-purple-200 bg-purple-100/60">
+                                <div className="font-mono font-black text-sm text-purple-900">
+                                  {tot.totalFichas} fichas
+                                </div>
+                                <div className="text-[10px] text-slate-600 font-normal">
+                                  {tot.totalPessoas.toLocaleString('pt-PT')} pess.
+                                </div>
+                              </td>
+                            );
+                          })}
 
-                        {!isReadOnly && <td></td>}
-                      </tr>
-                    </tfoot>
-                  </table>
+                          <td className="py-3 px-3 text-center bg-purple-200/80 border-l border-purple-300">
+                            <div className="font-mono font-black text-base text-purple-950">
+                              {dailyAnalytics.totalGeralLancado}
+                            </div>
+                            <div className="text-[10px] text-purple-800 font-bold uppercase">Total Fichas</div>
+                          </td>
+
+                          <td className="py-3 px-3 text-center font-mono font-bold text-slate-800">
+                            {dailyAnalytics.taxaGlobalCumprimento}% global
+                          </td>
+
+                          <td></td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {/* VISTA 3: EXPLORADOR INTERATIVO DE FICHAS POR DIA (A CADA SUPERVISOR E COORDENAÇÃO) */}
+              {diarioSubView === 'explorador' && (
+                <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden space-y-4 p-4 sm:p-5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                    <div>
+                      <h4 className="font-bold text-slate-800 text-base flex items-center gap-2">
+                        <FileText className="w-5 h-5 text-emerald-600" />
+                        <span>Fichas por Dia a Cada Supervisor e Coordenação</span>
+                      </h4>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Consulte e audite individualmente as fichas lançadas em cada dia, filtrando por data de recolha, supervisor e coordenação.
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDiarioFiltroData('todas');
+                        setDiarioFiltroSupervisor('todos');
+                        setDiarioFiltroCoordenacao('todas');
+                      }}
+                      className="text-xs text-[#2667ff] hover:text-[#1a53db] font-semibold border border-blue-200 bg-blue-50 px-3 py-1.5 rounded-lg transition cursor-pointer self-start sm:self-center"
+                    >
+                      Mostrar Todas as Fichas
+                    </button>
+                  </div>
+
+                  {/* Barra de Filtros Interativos */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                        Filtrar por Dia de Coleta:
+                      </label>
+                      <select
+                        value={diarioFiltroData}
+                        onChange={(e) => setDiarioFiltroData(e.target.value)}
+                        className="w-full text-xs font-semibold bg-white border border-slate-300 rounded-lg p-2 text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-[#2667ff]"
+                      >
+                        <option value="todas">Todos os Dias de Campanha ({dailyAnalytics.sortedDates.length} dias)</option>
+                        {dailyAnalytics.sortedDates.map((d) => {
+                          const info = dailyAnalytics.dateLabels[d];
+                          const tot = dailyAnalytics.totalsByDate[d]?.totalFichas || 0;
+                          return (
+                            <option key={d} value={d}>
+                              {info?.label || d} &bull; {tot} fichas lançadas
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                        Filtrar por Coordenação:
+                      </label>
+                      <select
+                        value={diarioFiltroCoordenacao}
+                        onChange={(e) => setDiarioFiltroCoordenacao(e.target.value)}
+                        className="w-full text-xs font-semibold bg-white border border-slate-300 rounded-lg p-2 text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-purple-600"
+                      >
+                        <option value="todas">Todas as Coordenações ({coordenacoes.length})</option>
+                        {coordenacoes.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.nome} ({c.comuna})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                        Filtrar por Supervisor:
+                      </label>
+                      <select
+                        value={diarioFiltroSupervisor}
+                        onChange={(e) => setDiarioFiltroSupervisor(e.target.value)}
+                        className="w-full text-xs font-semibold bg-white border border-slate-300 rounded-lg p-2 text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-emerald-600"
+                      >
+                        <option value="todos">Todos os Supervisores ({supervisores.length})</option>
+                        {supervisores.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.nome} ({s.codigo} - {s.comuna})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Cartões de Resumo do Filtro Selecionado */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+                      <div className="text-[10px] uppercase font-bold text-emerald-800">Fichas no Filtro</div>
+                      <div className="text-2xl font-black text-emerald-700 mt-0.5">
+                        {filteredSubmissoesDiario.reduce((acc, s) => acc + (s.fichas ? s.fichas.length : 0), 0)}
+                      </div>
+                      <div className="text-[10px] text-emerald-600">fichas lançadas</div>
+                    </div>
+
+                    <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
+                      <div className="text-[10px] uppercase font-bold text-[#1a53db]">Pessoas Mobilizadas</div>
+                      <div className="text-2xl font-black text-[#1b4fd8] mt-0.5">
+                        {filteredSubmissoesDiario.reduce((acc, s) => acc + s.totalSim, 0).toLocaleString('pt-PT')}
+                      </div>
+                      <div className="text-[10px] text-blue-600">sim à mobilização</div>
+                    </div>
+
+                    <div className="bg-purple-50 border border-purple-200 rounded-xl p-3">
+                      <div className="text-[10px] uppercase font-bold text-purple-800">Supervisores Ativos</div>
+                      <div className="text-2xl font-black text-purple-700 mt-0.5">
+                        {new Set(filteredSubmissoesDiario.map((s) => s.supervisorId)).size}
+                      </div>
+                      <div className="text-[10px] text-purple-600">com lançamentos no filtro</div>
+                    </div>
+
+                    <div className="bg-slate-100 border border-slate-200 rounded-xl p-3">
+                      <div className="text-[10px] uppercase font-bold text-slate-700">Remessas de Envio</div>
+                      <div className="text-2xl font-black text-slate-800 mt-0.5">
+                        {filteredSubmissoesDiario.length}
+                      </div>
+                      <div className="text-[10px] text-slate-500">lotes submetidos</div>
+                    </div>
+                  </div>
+
+                  {/* Tabela e Lista de Fichas do Filtro */}
+                  {filteredSubmissoesDiario.length === 0 ? (
+                    <div className="text-center py-10 bg-slate-50 rounded-xl border border-dashed border-slate-200 text-slate-500">
+                      <FileText className="w-10 h-10 mx-auto text-slate-400 mb-2 opacity-50" />
+                      <p className="font-semibold text-sm">Nenhuma ficha encontrada para os filtros selecionados.</p>
+                      <p className="text-xs text-slate-400 mt-1">Tente selecionar outro dia, supervisor ou coordenação.</p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead className="bg-slate-50 text-slate-700 font-semibold uppercase tracking-wider border-b border-slate-200">
+                          <tr>
+                            <th className="py-3 px-3">Data & Dia</th>
+                            <th className="py-3 px-3">Supervisor</th>
+                            <th className="py-3 px-3">Coordenação</th>
+                            <th className="py-3 px-3 text-center">Nº Fichas</th>
+                            <th className="py-3 px-3">Bairros Visitados</th>
+                            <th className="py-3 px-3 text-center">Pessoas (Sim)</th>
+                            <th className="py-3 px-3 text-right">Ação</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {filteredSubmissoesDiario.map((sub) => {
+                            const sup = supervisores.find((s) => s.id === sub.supervisorId);
+                            const coord = coordenacoes.find(
+                              (c) =>
+                                (sup && c.supervisorIds && c.supervisorIds.includes(sup.id)) ||
+                                (sup && sup.coordenacaoId === c.id) ||
+                                (sup && c.nome && sup.coordenacao && sup.coordenacao.toLowerCase().trim() === c.nome.toLowerCase().trim())
+                            );
+
+                            return (
+                              <tr key={sub.id} className="hover:bg-slate-50 transition">
+                                <td className="py-3 px-3">
+                                  <div className="font-bold text-slate-900 font-mono">{sub.data}</div>
+                                  <div className="text-[10px] text-[#1a53db] font-semibold">
+                                    {dailyAnalytics.dateLabels[sub.data]?.label || (sub.diaCampanha ? `Dia ${sub.diaCampanha}` : sub.data)}
+                                    {sub.dataEnvio ? ` • ${new Date(sub.dataEnvio).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })}` : ''}
+                                  </div>
+                                </td>
+
+                                <td className="py-3 px-3">
+                                  <div className="font-bold text-slate-900">{sub.supervisorNome}</div>
+                                  <div className="text-[11px] text-slate-500 font-mono">
+                                    {sup?.codigo || sub.supervisorId} &bull; {sup?.comuna || sub.fichas?.[0]?.comuna || 'Sede'}
+                                  </div>
+                                </td>
+
+                                <td className="py-3 px-3">
+                                  {coord ? (
+                                    <span className="bg-purple-50 text-purple-800 border border-purple-200 px-2 py-0.5 rounded text-[11px] font-semibold">
+                                      {coord.nome}
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-400 italic text-[11px]">
+                                      {sup?.coordenacao || 'Geral'}
+                                    </span>
+                                  )}
+                                </td>
+
+                                <td className="py-3 px-3 text-center font-mono font-bold text-emerald-700">
+                                  <span className="bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
+                                    {sub.fichas ? sub.fichas.length : 1}
+                                  </span>
+                                </td>
+
+                                <td className="py-3 px-3">
+                                  <div className="flex flex-wrap gap-1 max-w-[280px]">
+                                    {sub.fichas?.map((f, i) => (
+                                      <span
+                                        key={i}
+                                        className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded text-[10px] font-medium border border-slate-200"
+                                      >
+                                        {f.bairro || 'Sede'}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </td>
+
+                                <td className="py-3 px-3 text-center font-bold text-[#1a53db]">
+                                  {sub.totalSim.toLocaleString('pt-PT')}
+                                </td>
+
+                                <td className="py-3 px-3 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedSubmission(sub)}
+                                    className="bg-[#2667ff] hover:bg-[#1a53db] text-white px-2.5 py-1 rounded text-xs font-semibold inline-flex items-center gap-1 cursor-pointer shadow-2xs transition"
+                                  >
+                                    <Eye className="w-3.5 h-3.5" />
+                                    <span>Ver Ficha</span>
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* GRÁFICO DE EVOLUÇÃO DIÁRIA (RECHARTS BAR CHART) */}
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs space-y-3">
@@ -2102,6 +3254,344 @@ export const AdminView: React.FC = () => {
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* ============================================================== */}
+          {/* TAB: GESTÃO DAS COORDENAÇÕES (1 A 2 SUPERVISORES POR COORDENAÇÃO) */}
+          {/* ============================================================== */}
+          {activeTab === 'coordenacoes' && (
+            <div className="space-y-6">
+              {/* Cabeçalho da Aba de Coordenações */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200 shadow-xs">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Compass className="w-5 h-5 text-purple-600" />
+                    <h3 className="text-lg font-bold text-slate-800">
+                      Coordenações de Mobilização Social no Sumbe
+                    </h3>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Estrutura operacional territorial: <strong>cada coordenação tem atribuídos de 1 a 2 supervisores</strong> para liderar as ações nos bairros, assegurando a cobertura de campo e o controlo diário de fichas.
+                  </p>
+                </div>
+
+                {!isReadOnly && (
+                  <button
+                    onClick={() => setShowAddCoordenacaoModal(true)}
+                    className="bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs sm:text-sm px-4 py-2.5 rounded-lg flex items-center justify-center gap-2 shadow-xs transition cursor-pointer shrink-0"
+                    title="Cadastrar nova coordenação no Sumbe"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Cadastrar Coordenação</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Mensagem de sucesso */}
+              {coordSuccessMsg && (
+                <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold rounded-xl flex items-center justify-between animate-in fade-in duration-200">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>{coordSuccessMsg}</span>
+                  </div>
+                  <button
+                    onClick={() => setCoordSuccessMsg('')}
+                    className="text-emerald-700 hover:text-emerald-950 font-bold text-lg leading-none cursor-pointer"
+                  >
+                    &times;
+                  </button>
+                </div>
+              )}
+
+              {/* 4 Cards de Resumo da Estrutura de Coordenação */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs border-l-4 border-l-purple-600">
+                  <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                    Total de Coordenações
+                  </div>
+                  <div className="text-2xl sm:text-3xl font-extrabold text-purple-700">
+                    {coordenacoes.length}
+                  </div>
+                  <div className="text-[11px] text-slate-500 mt-1">
+                    Setores municipais ativos
+                  </div>
+                </div>
+
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs border-l-4 border-l-emerald-500">
+                  <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                    Com 2 Supervisores
+                  </div>
+                  <div className="text-2xl sm:text-3xl font-extrabold text-emerald-700">
+                    {coordenacoes.filter((c) => (c.supervisorIds?.length || 0) === 2).length}
+                  </div>
+                  <div className="text-[11px] text-emerald-700 font-medium mt-1">
+                    Lotação completa (2 de 2)
+                  </div>
+                </div>
+
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs border-l-4 border-l-amber-500">
+                  <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                    Com 1 Supervisor
+                  </div>
+                  <div className="text-2xl sm:text-3xl font-extrabold text-amber-700">
+                    {coordenacoes.filter((c) => (c.supervisorIds?.length || 0) === 1).length}
+                  </div>
+                  <div className="text-[11px] text-amber-700 font-medium mt-1">
+                    Com 1 vaga disponível
+                  </div>
+                </div>
+
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs border-l-4 border-l-[#2667ff]">
+                  <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                    Supervisores Alocados
+                  </div>
+                  <div className="text-2xl sm:text-3xl font-extrabold text-[#1a53db]">
+                    {coordenacoes.reduce((acc, c) => acc + (c.supervisorIds?.length || 0), 0)} <span className="text-xs font-normal text-slate-400">/ {coordenacoes.length * 2} vagas</span>
+                  </div>
+                  <div className="text-[11px] text-slate-500 mt-1">
+                    Em coordenações ativas
+                  </div>
+                </div>
+              </div>
+
+              {/* Grid das Coordenações */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                {coordenacoes.length === 0 ? (
+                  <div className="col-span-full bg-white p-12 rounded-xl border border-slate-200 text-center space-y-3">
+                    <Compass className="w-12 h-12 text-purple-400 mx-auto opacity-40" />
+                    <h4 className="font-bold text-slate-800 text-base">Nenhuma Coordenação Cadastrada</h4>
+                    <p className="text-xs text-slate-500 max-w-md mx-auto">
+                      Cadastre as coordenações de campo do município do Sumbe para organizar os bairros e atribuir 1 a 2 supervisores a cada uma.
+                    </p>
+                    {!isReadOnly && (
+                      <button
+                        onClick={() => setShowAddCoordenacaoModal(true)}
+                        className="bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs px-4 py-2 rounded-lg inline-flex items-center gap-1.5 transition cursor-pointer"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>Cadastrar Primeira Coordenação</span>
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  coordenacoes.map((coord) => {
+                    const coordSups = supervisores.filter((s) => coord.supervisorIds?.includes(s.id));
+                    const coordSubmissoes = submissoes.filter((sub) => coord.supervisorIds?.includes(sub.supervisorId));
+                    const totalFichasCoord = coordSubmissoes.reduce((acc, sub) => acc + sub.fichas.length, 0);
+                    const totalPessoasCoord = coordSubmissoes.reduce((acc, sub) => acc + sub.totalPessoas, 0);
+                    const metaCoord = coord.metaFichasTotal || 50;
+                    const pctCumprimento = Math.min(100, Math.round((totalFichasCoord / metaCoord) * 100));
+
+                    const numSupervisores = coord.supervisorIds?.length || 0;
+                    const temVaga = numSupervisores < (coord.limiteSupervisores || 2);
+
+                    return (
+                      <div
+                        key={coord.id}
+                        className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden flex flex-col justify-between hover:border-purple-300 transition"
+                      >
+                        <div className="p-5">
+                          {/* Topo do Card */}
+                          <div className="flex items-start justify-between gap-2 mb-2">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-10 h-10 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center font-bold shrink-0">
+                                <Compass className="w-5 h-5" />
+                              </div>
+                              <div>
+                                <h4 className="font-bold text-slate-900 text-sm sm:text-base leading-tight">
+                                  {coord.nome}
+                                </h4>
+                                <div className="text-[11px] text-slate-400 mt-0.5">
+                                  {coord.municipio || 'Sumbe'} &bull; Comuna {coord.comuna || 'Sede'}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Badge de Lotação (1 a 2 Supervisores) */}
+                            <span
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap shrink-0 ${
+                                numSupervisores === 2
+                                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                  : numSupervisores === 1
+                                  ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                  : 'bg-rose-50 text-rose-800 border-rose-200'
+                              }`}
+                            >
+                              {numSupervisores === 2
+                                ? '2 / 2 Supervisores'
+                                : numSupervisores === 1
+                                ? '1 / 2 (1 Vaga)'
+                                : '0 / 2 Supervisores'}
+                            </span>
+                          </div>
+
+                          {/* Descrição */}
+                          {coord.descricao && (
+                            <p className="text-xs text-slate-600 mt-2 mb-3 leading-relaxed">
+                              {coord.descricao}
+                            </p>
+                          )}
+
+                          {/* Bairros / Aldeias Abrangidos (Tags Organizadas sem Cortar Informação) */}
+                          <div className="mt-3 pt-3 border-t border-slate-100">
+                            <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                              <MapPin className="w-3 h-3 text-purple-500" />
+                              <span>Bairros / Setores Cobertos:</span>
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {(coord.bairros && coord.bairros.length > 0 ? coord.bairros : ['Centro', 'Sede']).map((b, i) => (
+                                <span
+                                  key={i}
+                                  className="bg-purple-50 text-purple-900 border border-purple-200 px-2 py-0.5 rounded-md text-[11px] font-medium"
+                                >
+                                  {b}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Meta & Progresso da Coordenação */}
+                          <div className="mt-3.5 p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="font-semibold text-slate-700">Fichas Lançadas na Coordenação:</span>
+                              <span className="font-mono font-bold text-purple-800">
+                                {totalFichasCoord} / {metaCoord} ({pctCumprimento}%)
+                              </span>
+                            </div>
+                            <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                              <div
+                                className="bg-purple-600 h-full rounded-full transition-all duration-500"
+                                style={{ width: `${pctCumprimento}%` }}
+                              ></div>
+                            </div>
+                            <div className="flex items-center justify-between text-[11px] text-slate-500 pt-0.5">
+                              <span>Pessoas mobilizadas: <strong>{totalPessoasCoord.toLocaleString('pt-PT')}</strong></span>
+                              <span>Meta: <strong>{metaCoord} fichas</strong></span>
+                            </div>
+                          </div>
+
+                          {/* Supervisores Atribuídos (1 a 2) */}
+                          <div className="mt-4">
+                            <div className="text-xs font-bold text-slate-700 mb-2 flex items-center justify-between">
+                              <span className="flex items-center gap-1.5">
+                                <Users className="w-3.5 h-3.5 text-purple-600" />
+                                <span>Supervisores Vinculados ({numSupervisores} de 2):</span>
+                              </span>
+                              {temVaga && !isReadOnly && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenAssignModal(coord)}
+                                  className="text-[11px] text-purple-700 hover:text-purple-900 font-bold hover:underline cursor-pointer"
+                                >
+                                  + Atribuir {numSupervisores === 0 ? '1º' : '2º'}
+                                </button>
+                              )}
+                            </div>
+
+                            <div className="space-y-2">
+                              {coordSups.map((sup) => {
+                                const supSubs = submissoes.filter((s) => s.supervisorId === sup.id);
+                                const supFichas = supSubs.reduce((acc, s) => acc + s.fichas.length, 0);
+
+                                return (
+                                  <div
+                                    key={sup.id}
+                                    className="bg-white p-2.5 rounded-lg border border-slate-200 flex items-center justify-between gap-2 shadow-2xs"
+                                  >
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <div className="w-7 h-7 rounded-full bg-purple-600 text-white font-bold flex items-center justify-center text-xs shrink-0">
+                                        {sup.nome.slice(0, 2).toUpperCase()}
+                                      </div>
+                                      <div className="min-w-0">
+                                        <div className="text-xs font-bold text-slate-900 truncate">
+                                          {sup.nome}
+                                        </div>
+                                        <div className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
+                                          <span className="text-[#2667ff] font-bold">{sup.codigo}</span>
+                                          <span>&bull; {supFichas} fichas</span>
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {!isReadOnly && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRemoveSupervisorFromCoord(coord.id, sup.id)}
+                                        className="text-slate-400 hover:text-rose-600 p-1 rounded hover:bg-rose-50 text-[10px] font-semibold transition cursor-pointer"
+                                        title="Desvincular supervisor desta coordenação"
+                                      >
+                                        Desvincular
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })}
+
+                              {/* Vaga Aberta para o 2º supervisor */}
+                              {temVaga && (
+                                <button
+                                  type="button"
+                                  onClick={() => !isReadOnly && handleOpenAssignModal(coord)}
+                                  disabled={isReadOnly}
+                                  className="w-full border-2 border-dashed border-purple-200 hover:border-purple-400 hover:bg-purple-50/50 p-2.5 rounded-lg text-xs font-semibold text-purple-700 flex items-center justify-center gap-1.5 transition cursor-pointer disabled:cursor-default"
+                                >
+                                  <UserPlus className="w-3.5 h-3.5" />
+                                  <span>
+                                    {numSupervisores === 0
+                                      ? 'Atribuir 1º Supervisor (Vaga Aberta)'
+                                      : 'Atribuir 2º Supervisor (Vaga Aberta)'}
+                                  </span>
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Rodapé de Ações da Coordenação */}
+                        {!isReadOnly ? (
+                          <div className="p-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditCoordenacao(coord)}
+                              className="flex-1 bg-white hover:bg-purple-50 text-purple-700 border border-purple-200 hover:border-purple-300 py-1.5 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition cursor-pointer"
+                              title="Editar nome, bairros ou metas desta coordenação"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                              <span>Editar Coordenação</span>
+                            </button>
+
+                            {temVaga && (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenAssignModal(coord)}
+                                className="bg-purple-600 hover:bg-purple-700 text-white py-1.5 px-2.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition cursor-pointer"
+                                title="Atribuir supervisor a esta coordenação"
+                              >
+                                <UserPlus className="w-3.5 h-3.5" />
+                                <span>+ Supervisor</span>
+                              </button>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteCoordenacao(coord)}
+                              className="text-slate-400 hover:text-red-600 p-1.5 rounded-lg hover:bg-white transition cursor-pointer"
+                              title="Eliminar coordenação"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="p-2.5 bg-slate-50 border-t border-slate-100 text-center text-[11px] text-slate-400 font-medium">
+                            Coordenação Ativa &bull; Modo de Leitura
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
           )}
@@ -2551,9 +4041,10 @@ export const AdminView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Tabela de Relatórios */}
+              {/* Lista e Tabela de Relatórios Totalmente Responsiva */}
               <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
-                <div className="overflow-x-auto">
+                {/* Visualização em Tabela para Tablets e Computadores */}
+                <div className="hidden sm:block overflow-x-auto">
                   <table className="w-full text-left text-sm">
                     <thead className="bg-slate-50 text-slate-600 text-xs font-semibold uppercase tracking-wider border-b border-slate-200">
                       <tr>
@@ -2578,7 +4069,6 @@ export const AdminView: React.FC = () => {
                       ) : (
                         filteredSubmissoes.map((sub) => {
                           const comunas = Array.from(new Set(sub.fichas.map((f) => f.comuna))).join(', ');
-                          const bairros = sub.fichas.map((f) => f.bairro).join(', ');
 
                           return (
                             <tr key={sub.id} className="hover:bg-slate-50 transition">
@@ -2591,8 +4081,18 @@ export const AdminView: React.FC = () => {
                               <td className="py-3 px-4 text-xs font-medium text-slate-700">
                                 {comunas || 'Sede'}
                               </td>
-                              <td className="py-3 px-4 text-xs text-slate-600 max-w-[200px] truncate" title={bairros}>
-                                {bairros}
+                              <td className="py-3 px-4 text-xs text-slate-700 max-w-xs">
+                                <div className="flex flex-wrap gap-1">
+                                  {sub.fichas.map((f, i) => (
+                                    <span
+                                      key={i}
+                                      className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded text-[11px] font-medium border border-slate-200"
+                                      title={`Bairro ${f.bairro} (${f.comuna})`}
+                                    >
+                                      {f.bairro}
+                                    </span>
+                                  ))}
+                                </div>
                               </td>
                               <td className="py-3 px-4 text-xs font-semibold text-slate-800">
                                 {sub.fichas.length}
@@ -2613,7 +4113,7 @@ export const AdminView: React.FC = () => {
                                         e.target.value as 'Validado' | 'Pendente' | 'Em Revisão'
                                       )
                                     }
-                                    className={`text-xs font-bold py-1 px-2 rounded border ${
+                                    className={`text-xs font-bold py-1 px-2 rounded border cursor-pointer ${
                                       sub.status === 'Validado'
                                         ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
                                         : sub.status === 'Pendente'
@@ -2654,7 +4154,7 @@ export const AdminView: React.FC = () => {
                                         deleteSubmissao(sub.id);
                                       }
                                     }}
-                                    className="text-slate-400 hover:text-red-600 p-1 rounded"
+                                    className="text-slate-400 hover:text-red-600 p-1 rounded cursor-pointer"
                                     title="Eliminar submissão"
                                   >
                                     <Trash2 className="w-3.5 h-3.5" />
@@ -2667,6 +4167,125 @@ export const AdminView: React.FC = () => {
                       )}
                     </tbody>
                   </table>
+                </div>
+
+                {/* Visualização em Cartões para Dispositivos Móveis (Zero Corte de Informações) */}
+                <div className="sm:hidden divide-y divide-slate-100">
+                  {filteredSubmissoes.length === 0 ? (
+                    <div className="p-8 text-center text-slate-400 text-xs">
+                      Nenhum relatório encontrado com os filtros selecionados.
+                    </div>
+                  ) : (
+                    filteredSubmissoes.map((sub) => {
+                      const comunas = Array.from(new Set(sub.fichas.map((f) => f.comuna))).join(', ');
+
+                      return (
+                        <div key={sub.id} className="p-4 space-y-3 hover:bg-slate-50 transition">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <div className="font-bold text-slate-900 text-sm">
+                                {sub.supervisorNome}
+                              </div>
+                              <div className="text-[11px] text-slate-500 flex items-center gap-1.5 mt-0.5">
+                                <Calendar className="w-3 h-3 text-[#2667ff]" />
+                                <span className="font-semibold text-slate-700">{sub.data}</span>
+                                <span>&bull;</span>
+                                <span>{comunas || 'Sede'}</span>
+                              </div>
+                            </div>
+                            <span
+                              className={`badge text-[10px] ${
+                                sub.status === 'Validado'
+                                  ? 'badge-success'
+                                  : sub.status === 'Pendente'
+                                  ? 'badge-warning'
+                                  : 'badge-info'
+                              }`}
+                            >
+                              {sub.status}
+                            </span>
+                          </div>
+
+                          {/* Bairros sem corte */}
+                          <div>
+                            <div className="text-[10px] font-bold text-slate-500 uppercase mb-1">
+                              Bairros Visitados ({sub.fichas.length} fichas):
+                            </div>
+                            <div className="flex flex-wrap gap-1">
+                              {sub.fichas.map((f, i) => (
+                                <span
+                                  key={i}
+                                  className="bg-slate-100 text-slate-800 px-2 py-0.5 rounded text-[11px] font-medium border border-slate-200"
+                                >
+                                  {f.bairro}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Estatísticas */}
+                          <div className="grid grid-cols-3 gap-2 bg-slate-50 p-2.5 rounded-lg border border-slate-200 text-center text-xs">
+                            <div>
+                              <span className="text-[10px] text-slate-500 block">Fichas</span>
+                              <strong className="text-slate-800 font-bold">{sub.fichas.length}</strong>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-slate-500 block">Sim</span>
+                              <strong className="text-[#1a53db] font-bold">{sub.totalSim}</strong>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-slate-500 block">Não</span>
+                              <strong className="text-slate-700 font-bold">{sub.totalNao}</strong>
+                            </div>
+                          </div>
+
+                          {/* Ações */}
+                          <div className="flex items-center justify-between pt-1">
+                            {!isReadOnly ? (
+                              <select
+                                value={sub.status}
+                                onChange={(e) =>
+                                  updateSubmissaoStatus(
+                                    sub.id,
+                                    e.target.value as 'Validado' | 'Pendente' | 'Em Revisão'
+                                  )
+                                }
+                                className="text-xs font-bold py-1 px-2 rounded border bg-white border-slate-300"
+                              >
+                                <option value="Validado">Validado</option>
+                                <option value="Pendente">Pendente</option>
+                                <option value="Em Revisão">Em Revisão</option>
+                              </select>
+                            ) : (
+                              <div></div>
+                            )}
+
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => setSelectedSubmission(sub)}
+                                className="text-xs bg-[#eff4ff] hover:bg-[#dbeafe] text-[#1a53db] font-semibold px-3 py-1.5 rounded-lg transition inline-flex items-center gap-1 cursor-pointer"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                                <span>Ver Detalhes</span>
+                              </button>
+                              {!isReadOnly && (
+                                <button
+                                  onClick={() => {
+                                    if (window.confirm('Deseja eliminar esta submissão?')) {
+                                      deleteSubmissao(sub.id);
+                                    }
+                                  }}
+                                  className="text-slate-400 hover:text-red-600 p-1.5 rounded"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
               </div>
             </div>
@@ -2992,21 +4611,38 @@ export const AdminView: React.FC = () => {
                 </div>
               </div>
 
-              {/* COORDENAÇÃO */}
+              {/* COORDENAÇÃO (SELEÇÃO DIRETA OU ESCRITA) */}
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Coordenação de Atuação <span className="text-[#2667ff]">*</span>
+                  Coordenação de Atuação (1 a 2 Supervisores) <span className="text-purple-600">*</span>
                 </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Ex: Coordenação Sumbe Sede / Setor Litoral"
-                  value={newSupCoordenacao}
-                  onChange={(e) => setNewSupCoordenacao(e.target.value)}
-                  className="w-full text-sm"
-                />
+                <div className="space-y-1.5">
+                  <select
+                    value={newSupCoordenacao}
+                    onChange={(e) => setNewSupCoordenacao(e.target.value)}
+                    className="w-full text-sm font-semibold py-2 px-3 border border-slate-300 rounded-lg bg-white"
+                  >
+                    <option value="">Selecione uma coordenação registada...</option>
+                    {coordenacoes.map((c) => {
+                      const vagas = 2 - (c.supervisorIds?.length || 0);
+                      return (
+                        <option key={c.id} value={c.nome}>
+                          {c.nome} {vagas > 0 ? `(${vagas} vaga${vagas > 1 ? 's' : ''})` : '(Lotação completa)'}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ou digite o nome da coordenação..."
+                    value={newSupCoordenacao}
+                    onChange={(e) => setNewSupCoordenacao(e.target.value)}
+                    className="w-full text-xs py-1.5 px-3 border border-slate-200 rounded-lg bg-slate-50"
+                  />
+                </div>
                 <span className="text-[10px] text-slate-400">
-                  Área ou setor de coordenação atribuída a este supervisor
+                  Cada coordenação suporta até 2 supervisores. Selecione da lista ou escreva o nome pretendido.
                 </span>
               </div>
 
@@ -3433,6 +5069,470 @@ export const AdminView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* ============================================================== */}
+      {/* MODAL: CADASTRAR NOVA COORDENAÇÃO (1 A 2 SUPERVISORES) */}
+      {/* ============================================================== */}
+      {showAddCoordenacaoModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-[9999] overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 text-slate-800 my-8 max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3 mb-4 shrink-0">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center font-bold">
+                  <Compass className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-base sm:text-lg">
+                    Cadastrar Nova Coordenação
+                  </h3>
+                  <div className="text-[11px] text-purple-700 font-semibold">
+                    Regra: Cada coordenação tem de 1 a 2 supervisores
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddCoordenacaoModal(false)}
+                className="text-slate-400 hover:text-slate-600 text-xl font-bold cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 mb-4 leading-relaxed shrink-0">
+              Crie uma coordenação territorial para mobilização no Sumbe. Cada coordenação agrupa bairros específicos e tem uma equipa de <strong>1 a 2 supervisores</strong> dedicados.
+            </p>
+
+            <form onSubmit={handleCreateCoordenacao} className="space-y-4 overflow-y-auto pr-1 flex-1">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Nome da Coordenação <span className="text-purple-600">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: Coordenação Sumbe Centro & Litoral"
+                  value={newCoordNome}
+                  onChange={(e) => setNewCoordNome(e.target.value)}
+                  className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-600 outline-none"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Descrição / Setor de Abrangência
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="Ex: Zona central, comércio, orla marítima e porto pesqueiro"
+                  value={newCoordDescricao}
+                  onChange={(e) => setNewCoordDescricao(e.target.value)}
+                  className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-600 outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Município / Comuna (Fixo)
+                  </label>
+                  <input
+                    type="text"
+                    value="Sumbe / Sede"
+                    readOnly
+                    className="w-full text-xs font-semibold bg-slate-100 py-2 px-3 rounded-lg border border-slate-300"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Meta de Fichas da Coordenação <span className="text-purple-600">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={500}
+                    required
+                    value={newCoordMetaFichas}
+                    onChange={(e) => setNewCoordMetaFichas(Math.max(1, parseInt(e.target.value) || 1))}
+                    className="w-full text-sm font-bold text-slate-900 py-2 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-600 outline-none"
+                    placeholder="Ex: 50"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Bairros e Aldeias de Cobertura <span className="text-purple-600">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: Centro, Litoral, Porto, Chingo, Bairro Novo (separados por vírgula)"
+                  value={newCoordBairros}
+                  onChange={(e) => setNewCoordBairros(e.target.value)}
+                  className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-600 outline-none"
+                />
+                <span className="text-[11px] text-slate-500 mt-1 block">
+                  Indique os bairros separados por vírgula para organização territorial sem cortar texto.
+                </span>
+              </div>
+
+              {/* SELEÇÃO DE SUPERVISORES (1 A 2 SUPERVISORES) */}
+              <div className="bg-purple-50/70 p-3.5 rounded-xl border border-purple-200 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-purple-950 uppercase tracking-wide">
+                    <Users className="w-4 h-4 text-purple-700" />
+                    <span>Supervisores da Coordenação</span>
+                  </div>
+                  <span
+                    className={`text-xs font-bold font-mono px-2 py-0.5 rounded-full ${
+                      newCoordSupervisorIds.length === 2
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : newCoordSupervisorIds.length === 1
+                        ? 'bg-amber-100 text-amber-800'
+                        : 'bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    {newCoordSupervisorIds.length} de 2 selecionados
+                  </span>
+                </div>
+
+                <p className="text-[11px] text-purple-900 leading-relaxed">
+                  Selecione <strong>1 ou 2 supervisores</strong> para esta coordenação. Caso selecione apenas 1 agora, poderá atribuir o 2º posteriormente.
+                </p>
+
+                <div className="max-h-44 overflow-y-auto space-y-1.5 bg-white p-2.5 rounded-lg border border-purple-200 divide-y divide-slate-100">
+                  {supervisores.map((sup) => {
+                    const isSelected = newCoordSupervisorIds.includes(sup.id);
+                    const isMaxReached = newCoordSupervisorIds.length >= 2 && !isSelected;
+
+                    return (
+                      <label
+                        key={sup.id}
+                        className={`flex items-center justify-between p-2 rounded-md transition cursor-pointer text-xs ${
+                          isSelected
+                            ? 'bg-purple-100/70 font-semibold text-purple-950'
+                            : isMaxReached
+                            ? 'opacity-40 cursor-not-allowed'
+                            : 'hover:bg-slate-50 text-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            disabled={isMaxReached}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                if (newCoordSupervisorIds.length < 2) {
+                                  setNewCoordSupervisorIds([...newCoordSupervisorIds, sup.id]);
+                                }
+                              } else {
+                                setNewCoordSupervisorIds(newCoordSupervisorIds.filter((id) => id !== sup.id));
+                              }
+                            }}
+                            className="w-4 h-4 text-purple-600 rounded focus:ring-purple-500 cursor-pointer"
+                          />
+                          <div>
+                            <div className="font-bold text-slate-900">{sup.nome}</div>
+                            <div className="text-[10px] text-slate-500 font-mono">
+                              {sup.codigo} &bull; {sup.coordenacao || 'Sem coordenação'}
+                            </div>
+                          </div>
+                        </div>
+
+                        {isSelected && (
+                          <span className="text-[10px] bg-purple-600 text-white font-bold px-1.5 py-0.5 rounded">
+                            Vinculado
+                          </span>
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-200 mt-4 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowAddCoordenacaoModal(false)}
+                  className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 text-xs sm:text-sm font-semibold hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isCreatingCoord || !newCoordNome.trim()}
+                  className="px-5 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-xs sm:text-sm font-semibold shadow-xs transition cursor-pointer"
+                >
+                  {isCreatingCoord ? 'A Gravar...' : 'Salvar Coordenação no Firebase'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* MODAL: EDITAR COORDENAÇÃO EXISTENTE */}
+      {/* ============================================================== */}
+      {editingCoordenacao && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-[9999] overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 text-slate-800 my-8 max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3 mb-4 shrink-0">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center font-bold">
+                  <Edit3 className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-base sm:text-lg">
+                    Editar Coordenação
+                  </h3>
+                  <div className="text-[11px] text-slate-500">
+                    {editingCoordenacao.nome}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingCoordenacao(null)}
+                className="text-slate-400 hover:text-slate-600 text-xl font-bold cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditCoordenacao} className="space-y-4 overflow-y-auto pr-1 flex-1">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Nome da Coordenação <span className="text-purple-600">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editCoordNome}
+                  onChange={(e) => setEditCoordNome(e.target.value)}
+                  className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-600 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Descrição / Setor
+                </label>
+                <textarea
+                  rows={2}
+                  value={editCoordDescricao}
+                  onChange={(e) => setEditCoordDescricao(e.target.value)}
+                  className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-600 outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Meta de Fichas Total
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={500}
+                    required
+                    value={editCoordMetaFichas}
+                    onChange={(e) => setEditCoordMetaFichas(Math.max(1, parseInt(e.target.value) || 1))}
+                    className="w-full text-sm font-bold text-slate-900 py-2 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-600 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Limite de Supervisores
+                  </label>
+                  <input
+                    type="text"
+                    value="2 Supervisores (Fixo)"
+                    readOnly
+                    className="w-full text-xs font-semibold bg-slate-100 py-2 px-3 rounded-lg border border-slate-300"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Bairros de Cobertura (Separados por vírgula)
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editCoordBairros}
+                  onChange={(e) => setEditCoordBairros(e.target.value)}
+                  className="w-full text-sm py-2 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-600 outline-none"
+                />
+              </div>
+
+              {/* Supervisores Atribuídos (Máx 2) */}
+              <div className="bg-purple-50/70 p-3.5 rounded-xl border border-purple-200 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-purple-950 uppercase tracking-wide">
+                    Supervisores Atribuídos ({editCoordSupervisorIds.length} de 2):
+                  </span>
+                  <span className="text-[11px] font-semibold text-purple-800">
+                    Máximo permitido: 2
+                  </span>
+                </div>
+
+                <div className="max-h-40 overflow-y-auto space-y-1.5 bg-white p-2 rounded-lg border border-purple-200">
+                  {supervisores.map((sup) => {
+                    const isSelected = editCoordSupervisorIds.includes(sup.id);
+                    const isMaxReached = editCoordSupervisorIds.length >= 2 && !isSelected;
+
+                    return (
+                      <label
+                        key={sup.id}
+                        className={`flex items-center justify-between p-2 rounded transition cursor-pointer text-xs ${
+                          isSelected
+                            ? 'bg-purple-100 font-semibold text-purple-950'
+                            : isMaxReached
+                            ? 'opacity-40 cursor-not-allowed'
+                            : 'hover:bg-slate-50 text-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            disabled={isMaxReached}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                if (editCoordSupervisorIds.length < 2) {
+                                  setEditCoordSupervisorIds([...editCoordSupervisorIds, sup.id]);
+                                }
+                              } else {
+                                setEditCoordSupervisorIds(editCoordSupervisorIds.filter((id) => id !== sup.id));
+                              }
+                            }}
+                            className="w-4 h-4 text-purple-600 rounded"
+                          />
+                          <div>
+                            <div className="font-bold text-slate-900">{sup.nome}</div>
+                            <div className="text-[10px] text-slate-400 font-mono">{sup.codigo}</div>
+                          </div>
+                        </div>
+                        {isSelected && (
+                          <span className="text-[10px] bg-purple-600 text-white font-bold px-1.5 py-0.5 rounded">
+                            Atribuído
+                          </span>
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-200 mt-4 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setEditingCoordenacao(null)}
+                  className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 text-xs font-semibold hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingCoord}
+                  className="px-5 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-xs font-semibold shadow-xs transition cursor-pointer"
+                >
+                  {isSavingCoord ? 'A Gravar...' : 'Guardar Alterações'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* MODAL: ATRIBUIR SUPERVISOR A UMA COORDENAÇÃO RÁPIDO */}
+      {/* ============================================================== */}
+      {assignModalCoord && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-[9999]">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 text-slate-800 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3 mb-4">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center font-bold">
+                  <UserPlus className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-base">
+                    Atribuir Supervisor à Coordenação
+                  </h3>
+                  <div className="text-xs text-purple-700 font-semibold">
+                    {assignModalCoord.nome}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAssignModalCoord(null)}
+                className="text-slate-400 hover:text-slate-600 text-xl font-bold cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 mb-4 leading-relaxed">
+              Esta coordenação possui atualmente <strong>{assignModalCoord.supervisorIds.length} de 2 supervisores</strong>. Selecione o supervisor que irá ocupar a vaga disponível:
+            </p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Selecione o Supervisor
+                </label>
+                <select
+                  value={selectedSupervisorToAssign}
+                  onChange={(e) => setSelectedSupervisorToAssign(e.target.value)}
+                  className="w-full text-sm font-semibold py-2 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-600 outline-none bg-white"
+                >
+                  <option value="">Selecione um supervisor...</option>
+                  {supervisores
+                    .filter((s) => !assignModalCoord.supervisorIds.includes(s.id))
+                    .map((sup) => (
+                      <option key={sup.id} value={sup.id}>
+                        {sup.nome} ({sup.codigo}) &bull; Atual: {sup.coordenacao || 'Coordenação Geral'}
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              <div className="p-3 bg-purple-50 rounded-lg border border-purple-200 text-[11px] text-purple-900 flex items-start gap-2">
+                <Compass className="w-4 h-4 text-purple-600 shrink-0 mt-0.5" />
+                <span>
+                  Ao confirmar, o supervisor será vinculado a esta coordenação e o seu perfil de campo passará a refletir esta área de atuação.
+                </span>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-200 mt-4">
+                <button
+                  type="button"
+                  onClick={() => setAssignModalCoord(null)}
+                  className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 text-xs font-semibold hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={!selectedSupervisorToAssign}
+                  onClick={handleConfirmAssign}
+                  className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-xs font-semibold shadow-xs transition cursor-pointer"
+                >
+                  Confirmar Atribuição
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+

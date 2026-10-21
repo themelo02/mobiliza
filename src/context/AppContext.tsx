@@ -78,7 +78,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return null;
   });
 
-  const [activeScreen, setActiveScreen] = useState<'formulario' | 'dashboard' | 'historico'>('formulario');
+  const [activeScreen, setActiveScreen] = useState<'formulario' | 'dashboard' | 'historico'>(() => {
+    try {
+      const storedSession = sessionStorage.getItem('ms_sumbe_session');
+      if (storedSession) {
+        const parsed = JSON.parse(storedSession);
+        // Para administradores e leitores, a página inicial no acesso e ao atualizar/refresh deve ser sempre o DASHBOARD
+        if (parsed?.tipo === 'admin' || parsed?.tipo === 'leitor') {
+          return 'dashboard';
+        }
+      }
+      const storedScreen = sessionStorage.getItem('ms_sumbe_screen');
+      if (storedScreen === 'formulario' || storedScreen === 'dashboard' || storedScreen === 'historico') {
+        return storedScreen;
+      }
+    } catch {
+      // ignore
+    }
+    return 'formulario';
+  });
 
   // Clean up any legacy localStorage data to comply with user instructions
   useEffect(() => {
@@ -94,18 +112,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, []);
 
-  // Save session in sessionStorage only
+  // Save session in sessionStorage and synchronize default screen
   useEffect(() => {
     try {
       if (userSession) {
         sessionStorage.setItem('ms_sumbe_session', JSON.stringify(userSession));
+        if (userSession.tipo === 'admin' || userSession.tipo === 'leitor') {
+          sessionStorage.setItem('ms_sumbe_screen', 'dashboard');
+        }
       } else {
         sessionStorage.removeItem('ms_sumbe_session');
+        sessionStorage.removeItem('ms_sumbe_screen');
       }
     } catch {
       // ignore
     }
   }, [userSession]);
+
+  // Persist current active screen in sessionStorage
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('ms_sumbe_screen', activeScreen);
+    } catch {
+      // ignore
+    }
+  }, [activeScreen]);
 
   // Firestore Initialization & Realtime Listeners
   useEffect(() => {

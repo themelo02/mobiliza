@@ -126,11 +126,19 @@ body {
 .form-container {
   background-color: var(--white);
   max-width: 900px;
+  width: 100%;
   margin: 0 auto;
-  padding: 35px 30px;
+  padding: 20px 14px;
   border-radius: 12px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
   border: 1px solid #f1f5f9;
+  box-sizing: border-box;
+}
+
+@media (min-width: 480px) {
+  .form-container {
+    padding: 28px 24px;
+  }
 }
 
 @media (min-width: 640px) {
@@ -257,9 +265,16 @@ input[readonly] {
 /* Activities section */
 .activities-section {
   background-color: #f8faff;
-  padding: 24px 20px;
+  padding: 16px 12px;
   border-radius: 10px;
   border: 1px solid #bfdbfe;
+  box-sizing: border-box;
+}
+
+@media (min-width: 480px) {
+  .activities-section {
+    padding: 24px 20px;
+  }
 }
 
 .activities-grid {
@@ -279,12 +294,19 @@ input[readonly] {
 
 .activity-block {
   background-color: #ffffff;
-  padding: 30px 20px 20px 20px;
+  padding: 28px 12px 16px 12px;
   border-radius: 8px;
   border: 1px solid #bfdbfe;
   margin-bottom: 25px;
   position: relative;
   box-shadow: 0 2px 8px rgba(38, 103, 255, 0.05);
+  box-sizing: border-box;
+}
+
+@media (min-width: 480px) {
+  .activity-block {
+    padding: 30px 20px 20px 20px;
+  }
 }
 
 .ficha-header {

@@ -9,24 +9,24 @@ interface FichaFormState {
   diaCampanha?: number;
   comuna: string;
   bairro: string;
-  casa_locais: number;
-  casa_pessoas: number;
-  igrejas_locais: number;
-  igrejas_pessoas: number;
-  pracas_locais: number;
-  pracas_pessoas: number;
-  paragem_locais: number;
-  paragem_pessoas: number;
-  creches_locais: number;
-  creches_pessoas: number;
-  escolas_locais: number;
-  escolas_pessoas: number;
-  agua_locais: number;
-  agua_pessoas: number;
-  outros_locais: number;
-  outros_pessoas: number;
+  casa_locais: number | string;
+  casa_pessoas: number | string;
+  igrejas_locais: number | string;
+  igrejas_pessoas: number | string;
+  pracas_locais: number | string;
+  pracas_pessoas: number | string;
+  paragem_locais: number | string;
+  paragem_pessoas: number | string;
+  creches_locais: number | string;
+  creches_pessoas: number | string;
+  escolas_locais: number | string;
+  escolas_pessoas: number | string;
+  agua_locais: number | string;
+  agua_pessoas: number | string;
+  outros_locais: number | string;
+  outros_pessoas: number | string;
   total_sim: number;
-  total_nao: number;
+  total_nao: number | string;
 }
 
 const getTodayString = () => {
@@ -102,24 +102,24 @@ export const SupervisorView: React.FC = () => {
     diaCampanha: diaCampanha,
     comuna: activeSupervisor?.comuna || 'Sede',
     bairro: '',
-    casa_locais: 0,
-    casa_pessoas: 0,
-    igrejas_locais: 0,
-    igrejas_pessoas: 0,
-    pracas_locais: 0,
-    pracas_pessoas: 0,
-    paragem_locais: 0,
-    paragem_pessoas: 0,
-    creches_locais: 0,
-    creches_pessoas: 0,
-    escolas_locais: 0,
-    escolas_pessoas: 0,
-    agua_locais: 0,
-    agua_pessoas: 0,
-    outros_locais: 0,
-    outros_pessoas: 0,
+    casa_locais: '',
+    casa_pessoas: '',
+    igrejas_locais: '',
+    igrejas_pessoas: '',
+    pracas_locais: '',
+    pracas_pessoas: '',
+    paragem_locais: '',
+    paragem_pessoas: '',
+    creches_locais: '',
+    creches_pessoas: '',
+    escolas_locais: '',
+    escolas_pessoas: '',
+    agua_locais: '',
+    agua_pessoas: '',
+    outros_locais: '',
+    outros_pessoas: '',
     total_sim: 0,
-    total_nao: 0,
+    total_nao: '',
   });
 
   const [fichas, setFichas] = useState<FichaFormState[]>([createBlankFicha(1)]);
@@ -175,9 +175,15 @@ export const SupervisorView: React.FC = () => {
       if (field === 'bairro' || field === 'comuna') {
         target[field] = value as string;
       } else {
-        const numVal = Math.max(0, parseInt(String(value), 10) || 0);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (target as any)[field] = numVal;
+        const strVal = String(value ?? '').trim();
+        if (strVal === '') {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (target as any)[field] = '';
+        } else {
+          const numVal = parseInt(strVal, 10);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (target as any)[field] = isNaN(numVal) ? '' : Math.max(0, numVal);
+        }
       }
 
       // Recompute total_sim automatically
@@ -218,10 +224,29 @@ export const SupervisorView: React.FC = () => {
     }
 
     const finalFichas: FichaAtividade[] = fichas.map((f, idx) => ({
-      ...f,
       id: `f-${Date.now()}-${idx + 1}`,
       numeroFicha: idx + 1,
       diaCampanha: diaCampanha,
+      comuna: f.comuna || activeSupervisor.comuna || 'Sede',
+      bairro: f.bairro.trim(),
+      casa_locais: Number(f.casa_locais) || 0,
+      casa_pessoas: Number(f.casa_pessoas) || 0,
+      igrejas_locais: Number(f.igrejas_locais) || 0,
+      igrejas_pessoas: Number(f.igrejas_pessoas) || 0,
+      pracas_locais: Number(f.pracas_locais) || 0,
+      pracas_pessoas: Number(f.pracas_pessoas) || 0,
+      paragem_locais: Number(f.paragem_locais) || 0,
+      paragem_pessoas: Number(f.paragem_pessoas) || 0,
+      creches_locais: Number(f.creches_locais) || 0,
+      creches_pessoas: Number(f.creches_pessoas) || 0,
+      escolas_locais: Number(f.escolas_locais) || 0,
+      escolas_pessoas: Number(f.escolas_pessoas) || 0,
+      agua_locais: Number(f.agua_locais) || 0,
+      agua_pessoas: Number(f.agua_pessoas) || 0,
+      outros_locais: Number(f.outros_locais) || 0,
+      outros_pessoas: Number(f.outros_pessoas) || 0,
+      total_sim: Number(f.total_sim) || 0,
+      total_nao: Number(f.total_nao) || 0,
     }));
 
     let totalPessoas = 0;
@@ -525,8 +550,10 @@ export const SupervisorView: React.FC = () => {
                           type="number"
                           name="casa_locais[]"
                           min="0"
-                          value={ficha.casa_locais}
+                          placeholder="0"
+                          value={ficha.casa_locais === 0 || ficha.casa_locais === '0' ? '' : ficha.casa_locais}
                           onChange={(e) => handleInputChange(index, 'casa_locais', e.target.value)}
+                          onFocus={(e) => e.target.select()}
                         />
                       </div>
                       <div className="form-group">
@@ -538,8 +565,10 @@ export const SupervisorView: React.FC = () => {
                           name="casa_pessoas[]"
                           className="pessoas-input"
                           min="0"
-                          value={ficha.casa_pessoas}
+                          placeholder="0"
+                          value={ficha.casa_pessoas === 0 || ficha.casa_pessoas === '0' ? '' : ficha.casa_pessoas}
                           onChange={(e) => handleInputChange(index, 'casa_pessoas', e.target.value)}
+                          onFocus={(e) => e.target.select()}
                         />
                       </div>
 
@@ -552,8 +581,10 @@ export const SupervisorView: React.FC = () => {
                           type="number"
                           name="igrejas_locais[]"
                           min="0"
-                          value={ficha.igrejas_locais}
+                          placeholder="0"
+                          value={ficha.igrejas_locais === 0 || ficha.igrejas_locais === '0' ? '' : ficha.igrejas_locais}
                           onChange={(e) => handleInputChange(index, 'igrejas_locais', e.target.value)}
+                          onFocus={(e) => e.target.select()}
                         />
                       </div>
                       <div className="form-group">
@@ -565,8 +596,10 @@ export const SupervisorView: React.FC = () => {
                           name="igrejas_pessoas[]"
                           className="pessoas-input"
                           min="0"
-                          value={ficha.igrejas_pessoas}
+                          placeholder="0"
+                          value={ficha.igrejas_pessoas === 0 || ficha.igrejas_pessoas === '0' ? '' : ficha.igrejas_pessoas}
                           onChange={(e) => handleInputChange(index, 'igrejas_pessoas', e.target.value)}
+                          onFocus={(e) => e.target.select()}
                         />
                       </div>
 
@@ -579,8 +612,10 @@ export const SupervisorView: React.FC = () => {
                           type="number"
                           name="pracas_locais[]"
                           min="0"
-                          value={ficha.pracas_locais}
+                          placeholder="0"
+                          value={ficha.pracas_locais === 0 || ficha.pracas_locais === '0' ? '' : ficha.pracas_locais}
                           onChange={(e) => handleInputChange(index, 'pracas_locais', e.target.value)}
+                          onFocus={(e) => e.target.select()}
                         />
                       </div>
                       <div className="form-group">
@@ -592,8 +627,10 @@ export const SupervisorView: React.FC = () => {
                           name="pracas_pessoas[]"
                           className="pessoas-input"
                           min="0"
-                          value={ficha.pracas_pessoas}
+                          placeholder="0"
+                          value={ficha.pracas_pessoas === 0 || ficha.pracas_pessoas === '0' ? '' : ficha.pracas_pessoas}
                           onChange={(e) => handleInputChange(index, 'pracas_pessoas', e.target.value)}
+                          onFocus={(e) => e.target.select()}
                         />
                       </div>
 
@@ -606,8 +643,10 @@ export const SupervisorView: React.FC = () => {
                           type="number"
                           name="paragem_locais[]"
                           min="0"
-                          value={ficha.paragem_locais}
+                          placeholder="0"
+                          value={ficha.paragem_locais === 0 || ficha.paragem_locais === '0' ? '' : ficha.paragem_locais}
                           onChange={(e) => handleInputChange(index, 'paragem_locais', e.target.value)}
+                          onFocus={(e) => e.target.select()}
                         />
                       </div>
                       <div className="form-group">
@@ -619,8 +658,10 @@ export const SupervisorView: React.FC = () => {
                           name="paragem_pessoas[]"
                           className="pessoas-input"
                           min="0"
-                          value={ficha.paragem_pessoas}
+                          placeholder="0"
+                          value={ficha.paragem_pessoas === 0 || ficha.paragem_pessoas === '0' ? '' : ficha.paragem_pessoas}
                           onChange={(e) => handleInputChange(index, 'paragem_pessoas', e.target.value)}
+                          onFocus={(e) => e.target.select()}
                         />
                       </div>
 
@@ -633,8 +674,10 @@ export const SupervisorView: React.FC = () => {
                           type="number"
                           name="creches_locais[]"
                           min="0"
-                          value={ficha.creches_locais}
+                          placeholder="0"
+                          value={ficha.creches_locais === 0 || ficha.creches_locais === '0' ? '' : ficha.creches_locais}
                           onChange={(e) => handleInputChange(index, 'creches_locais', e.target.value)}
+                          onFocus={(e) => e.target.select()}
                         />
                       </div>
                       <div className="form-group">
@@ -646,8 +689,10 @@ export const SupervisorView: React.FC = () => {
                           name="creches_pessoas[]"
                           className="pessoas-input"
                           min="0"
-                          value={ficha.creches_pessoas}
+                          placeholder="0"
+                          value={ficha.creches_pessoas === 0 || ficha.creches_pessoas === '0' ? '' : ficha.creches_pessoas}
                           onChange={(e) => handleInputChange(index, 'creches_pessoas', e.target.value)}
+                          onFocus={(e) => e.target.select()}
                         />
                       </div>
 
@@ -660,8 +705,10 @@ export const SupervisorView: React.FC = () => {
                           type="number"
                           name="escolas_locais[]"
                           min="0"
-                          value={ficha.escolas_locais}
+                          placeholder="0"
+                          value={ficha.escolas_locais === 0 || ficha.escolas_locais === '0' ? '' : ficha.escolas_locais}
                           onChange={(e) => handleInputChange(index, 'escolas_locais', e.target.value)}
+                          onFocus={(e) => e.target.select()}
                         />
                       </div>
                       <div className="form-group">
@@ -673,8 +720,10 @@ export const SupervisorView: React.FC = () => {
                           name="escolas_pessoas[]"
                           className="pessoas-input"
                           min="0"
-                          value={ficha.escolas_pessoas}
+                          placeholder="0"
+                          value={ficha.escolas_pessoas === 0 || ficha.escolas_pessoas === '0' ? '' : ficha.escolas_pessoas}
                           onChange={(e) => handleInputChange(index, 'escolas_pessoas', e.target.value)}
+                          onFocus={(e) => e.target.select()}
                         />
                       </div>
 
@@ -687,8 +736,10 @@ export const SupervisorView: React.FC = () => {
                           type="number"
                           name="agua_locais[]"
                           min="0"
-                          value={ficha.agua_locais}
+                          placeholder="0"
+                          value={ficha.agua_locais === 0 || ficha.agua_locais === '0' ? '' : ficha.agua_locais}
                           onChange={(e) => handleInputChange(index, 'agua_locais', e.target.value)}
+                          onFocus={(e) => e.target.select()}
                         />
                       </div>
                       <div className="form-group">
@@ -700,8 +751,10 @@ export const SupervisorView: React.FC = () => {
                           name="agua_pessoas[]"
                           className="pessoas-input"
                           min="0"
-                          value={ficha.agua_pessoas}
+                          placeholder="0"
+                          value={ficha.agua_pessoas === 0 || ficha.agua_pessoas === '0' ? '' : ficha.agua_pessoas}
                           onChange={(e) => handleInputChange(index, 'agua_pessoas', e.target.value)}
+                          onFocus={(e) => e.target.select()}
                         />
                       </div>
 
@@ -714,8 +767,10 @@ export const SupervisorView: React.FC = () => {
                           type="number"
                           name="outros_locais[]"
                           min="0"
-                          value={ficha.outros_locais}
+                          placeholder="0"
+                          value={ficha.outros_locais === 0 || ficha.outros_locais === '0' ? '' : ficha.outros_locais}
                           onChange={(e) => handleInputChange(index, 'outros_locais', e.target.value)}
+                          onFocus={(e) => e.target.select()}
                         />
                       </div>
                       <div className="form-group">
@@ -727,8 +782,10 @@ export const SupervisorView: React.FC = () => {
                           name="outros_pessoas[]"
                           className="pessoas-input"
                           min="0"
-                          value={ficha.outros_pessoas}
+                          placeholder="0"
+                          value={ficha.outros_pessoas === 0 || ficha.outros_pessoas === '0' ? '' : ficha.outros_pessoas}
                           onChange={(e) => handleInputChange(index, 'outros_pessoas', e.target.value)}
+                          onFocus={(e) => e.target.select()}
                         />
                       </div>
 
@@ -753,8 +810,10 @@ export const SupervisorView: React.FC = () => {
                           type="number"
                           name="total_nao[]"
                           min="0"
-                          value={ficha.total_nao}
+                          placeholder="0"
+                          value={ficha.total_nao === 0 || ficha.total_nao === '0' ? '' : ficha.total_nao}
                           onChange={(e) => handleInputChange(index, 'total_nao', e.target.value)}
+                          onFocus={(e) => e.target.select()}
                         />
                       </div>
                     </div>

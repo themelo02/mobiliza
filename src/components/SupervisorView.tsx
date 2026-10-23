@@ -123,6 +123,9 @@ export const SupervisorView: React.FC = () => {
   });
 
   const [fichas, setFichas] = useState<FichaFormState[]>([createBlankFicha(1)]);
+  const [draftNotice, setDraftNotice] = useState<boolean>(false);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [activeFichaTab, setActiveFichaTab] = useState<number>(0);
   const [submittedModalData, setSubmittedModalData] = useState<{
     id: string;
     totalPessoas: number;
@@ -130,6 +133,68 @@ export const SupervisorView: React.FC = () => {
     totalFichas: number;
     bairros: string[];
   } | null>(null);
+
+  // Recuperar rascunho salvo da sessão (evita perda de dados em caso de atualização de página)
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem('ms_sumbe_ficha_draft');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.fichas && Array.isArray(parsed.fichas) && parsed.fichas.length > 0) {
+          setFichas(parsed.fichas);
+          if (parsed.dataColeta) setDataColeta(parsed.dataColeta);
+          if (parsed.diaCampanha) setDiaCampanha(parsed.diaCampanha);
+          setDraftNotice(true);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Salvar rascunho automaticamente a cada alteração
+  useEffect(() => {
+    try {
+      const hasContent = fichas.some((f) => f.bairro || f.total_sim > 0 || f.total_nao !== '');
+      if (hasContent) {
+        sessionStorage.setItem('ms_sumbe_ficha_draft', JSON.stringify({ fichas, dataColeta, diaCampanha }));
+      }
+    } catch {
+      // ignore
+    }
+  }, [fichas, dataColeta, diaCampanha]);
+
+  const handleClearDraft = () => {
+    sessionStorage.removeItem('ms_sumbe_ficha_draft');
+    setFichas([createBlankFicha(1)]);
+    setDraftNotice(false);
+  };
+
+  // Totais em tempo real deste lote de fichas
+  const liveBatchTotals = useMemo(() => {
+    let locais = 0;
+    let sim = 0;
+    let nao = 0;
+    fichas.forEach((f) => {
+      locais +=
+        (Number(f.casa_locais) || 0) +
+        (Number(f.igrejas_locais) || 0) +
+        (Number(f.pracas_locais) || 0) +
+        (Number(f.paragem_locais) || 0) +
+        (Number(f.creches_locais) || 0) +
+        (Number(f.escolas_locais) || 0) +
+        (Number(f.agua_locais) || 0) +
+        (Number(f.outros_locais) || 0);
+      sim += Number(f.total_sim) || 0;
+      nao += Number(f.total_nao) || 0;
+    });
+    return {
+      locais,
+      sim,
+      nao,
+      totalPessoas: sim + nao,
+    };
+  }, [fichas]);
 
   // Sync default comuna when active supervisor changes
   useEffect(() => {
@@ -269,31 +334,44 @@ export const SupervisorView: React.FC = () => {
         Number(f.outros_locais);
     });
 
-    const newSubmissao = await addSubmissao({
-      supervisorId: activeSupervisor.id,
-      supervisorNome: activeSupervisor.nome,
-      provincia: activeSupervisor.provincia || 'Cuanza-Sul',
-      municipio: activeSupervisor.municipio || 'Sumbe',
-      data: dataColeta,
-      diaCampanha: diaCampanha,
-      fichas: finalFichas,
-      totalPessoas,
-      totalLocais,
-      totalSim,
-      totalNao,
-      status: 'Validado',
-    });
+    setIsSubmitting(true);
+    try {
+      const newSubmissao = await addSubmissao({
+        supervisorId: activeSupervisor.id,
+        supervisorNome: activeSupervisor.nome,
+        provincia: activeSupervisor.provincia || 'Cuanza-Sul',
+        municipio: activeSupervisor.municipio || 'Sumbe',
+        data: dataColeta,
+        diaCampanha: diaCampanha,
+        fichas: finalFichas,
+        totalPessoas,
+        totalLocais,
+        totalSim,
+        totalNao,
+        status: 'Validado',
+      });
 
-    setSubmittedModalData({
-      id: newSubmissao.id,
-      totalPessoas,
-      totalLocais,
-      totalFichas: finalFichas.length,
-      bairros: finalFichas.map((f) => f.bairro),
-    });
+      // Limpar rascunho guardado após envio com sucesso
+      sessionStorage.removeItem('ms_sumbe_ficha_draft');
+      setDraftNotice(false);
 
-    // Reset form to 1 blank ficha with current supervisor comuna
-    setFichas([createBlankFicha(1)]);
+      setSubmittedModalData({
+        id: newSubmissao.id,
+        totalPessoas,
+        totalLocais,
+        totalFichas: finalFichas.length,
+        bairros: finalFichas.map((f) => f.bairro),
+      });
+
+      // Reset form to 1 blank ficha with current supervisor comuna
+      setFichas([createBlankFicha(1)]);
+      setActiveFichaTab(0);
+    } catch (err) {
+      console.error('Erro ao submeter fichas:', err);
+      alert('Ocorreu um erro ao enviar as fichas. Por favor, verifique a ligação e tente novamente.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handlePrint = () => {
@@ -387,6 +465,24 @@ export const SupervisorView: React.FC = () => {
             >
               <Edit3 className="w-3.5 h-3.5" />
               <span>Corrigir Lançamento Anterior</span>
+            </button>
+          </div>
+        )}
+
+        {draftNotice && (
+          <div className="mt-3 bg-emerald-50 border border-emerald-300 text-emerald-950 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-2xs">
+            <div className="flex items-center gap-2">
+              <span className="text-base">💾</span>
+              <span>
+                <strong>Rascunho recuperado:</strong> Os dados que estava a preencher foram restaurados automaticamente para não perder o trabalho.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={handleClearDraft}
+              className="text-rose-700 hover:text-rose-900 font-bold underline text-xs cursor-pointer shrink-0"
+            >
+              Limpar Rascunho
             </button>
           </div>
         )}
@@ -525,10 +621,35 @@ export const SupervisorView: React.FC = () => {
 
             {!collapsedSections.atividades && (
               <div className="section-content activities-section">
+                {/* Abas Rápidas de Navegação entre Fichas do Lote */}
+                {fichas.length > 1 && (
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-2.5 mb-3 pt-1 border-b border-slate-200">
+                    <span className="text-[11px] font-bold text-slate-500 mr-1 shrink-0">Saltar para:</span>
+                    {fichas.map((f, idx) => (
+                      <button
+                        key={f.id}
+                        type="button"
+                        onClick={() => {
+                          const el = document.getElementById(`ficha-block-${idx}`);
+                          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }}
+                        className="px-2.5 py-1 rounded-lg text-xs font-bold bg-white text-slate-700 hover:bg-blue-50 hover:text-blue-700 border border-slate-200 transition cursor-pointer whitespace-nowrap shadow-2xs"
+                      >
+                        Ficha {idx + 1} {f.bairro ? `(${f.bairro})` : ''}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 {fichas.map((ficha, index) => (
-                  <div key={ficha.id} className="activity-block">
-                    <div className="ficha-header">
-                      Ficha <span className="ficha-number">{index + 1}</span>
+                  <div key={ficha.id} id={`ficha-block-${index}`} className="activity-block">
+                    <div className="ficha-header flex items-center justify-between">
+                      <span>Ficha <span className="ficha-number">{index + 1}</span></span>
+                      {fichas.length > 1 && (
+                        <span className="text-xs font-normal text-slate-400">
+                          {index + 1} de {fichas.length}
+                        </span>
+                      )}
                     </div>
 
                     <div className="activities-grid">
@@ -577,9 +698,9 @@ export const SupervisorView: React.FC = () => {
                         </label>
                         <input
                           type="number"
+                          inputMode="numeric"
                           name="casa_locais[]"
                           min="0"
-                          placeholder="0"
                           value={ficha.casa_locais === 0 || ficha.casa_locais === '0' ? '' : ficha.casa_locais}
                           onChange={(e) => handleInputChange(index, 'casa_locais', e.target.value)}
                           onFocus={(e) => e.target.select()}
@@ -591,10 +712,10 @@ export const SupervisorView: React.FC = () => {
                         </label>
                         <input
                           type="number"
+                          inputMode="numeric"
                           name="casa_pessoas[]"
                           className="pessoas-input"
                           min="0"
-                          placeholder="0"
                           value={ficha.casa_pessoas === 0 || ficha.casa_pessoas === '0' ? '' : ficha.casa_pessoas}
                           onChange={(e) => handleInputChange(index, 'casa_pessoas', e.target.value)}
                           onFocus={(e) => e.target.select()}
@@ -608,9 +729,9 @@ export const SupervisorView: React.FC = () => {
                         </label>
                         <input
                           type="number"
+                          inputMode="numeric"
                           name="igrejas_locais[]"
                           min="0"
-                          placeholder="0"
                           value={ficha.igrejas_locais === 0 || ficha.igrejas_locais === '0' ? '' : ficha.igrejas_locais}
                           onChange={(e) => handleInputChange(index, 'igrejas_locais', e.target.value)}
                           onFocus={(e) => e.target.select()}
@@ -622,10 +743,10 @@ export const SupervisorView: React.FC = () => {
                         </label>
                         <input
                           type="number"
+                          inputMode="numeric"
                           name="igrejas_pessoas[]"
                           className="pessoas-input"
                           min="0"
-                          placeholder="0"
                           value={ficha.igrejas_pessoas === 0 || ficha.igrejas_pessoas === '0' ? '' : ficha.igrejas_pessoas}
                           onChange={(e) => handleInputChange(index, 'igrejas_pessoas', e.target.value)}
                           onFocus={(e) => e.target.select()}
@@ -639,9 +760,9 @@ export const SupervisorView: React.FC = () => {
                         </label>
                         <input
                           type="number"
+                          inputMode="numeric"
                           name="pracas_locais[]"
                           min="0"
-                          placeholder="0"
                           value={ficha.pracas_locais === 0 || ficha.pracas_locais === '0' ? '' : ficha.pracas_locais}
                           onChange={(e) => handleInputChange(index, 'pracas_locais', e.target.value)}
                           onFocus={(e) => e.target.select()}
@@ -653,10 +774,10 @@ export const SupervisorView: React.FC = () => {
                         </label>
                         <input
                           type="number"
+                          inputMode="numeric"
                           name="pracas_pessoas[]"
                           className="pessoas-input"
                           min="0"
-                          placeholder="0"
                           value={ficha.pracas_pessoas === 0 || ficha.pracas_pessoas === '0' ? '' : ficha.pracas_pessoas}
                           onChange={(e) => handleInputChange(index, 'pracas_pessoas', e.target.value)}
                           onFocus={(e) => e.target.select()}
@@ -670,9 +791,9 @@ export const SupervisorView: React.FC = () => {
                         </label>
                         <input
                           type="number"
+                          inputMode="numeric"
                           name="paragem_locais[]"
                           min="0"
-                          placeholder="0"
                           value={ficha.paragem_locais === 0 || ficha.paragem_locais === '0' ? '' : ficha.paragem_locais}
                           onChange={(e) => handleInputChange(index, 'paragem_locais', e.target.value)}
                           onFocus={(e) => e.target.select()}
@@ -684,10 +805,10 @@ export const SupervisorView: React.FC = () => {
                         </label>
                         <input
                           type="number"
+                          inputMode="numeric"
                           name="paragem_pessoas[]"
                           className="pessoas-input"
                           min="0"
-                          placeholder="0"
                           value={ficha.paragem_pessoas === 0 || ficha.paragem_pessoas === '0' ? '' : ficha.paragem_pessoas}
                           onChange={(e) => handleInputChange(index, 'paragem_pessoas', e.target.value)}
                           onFocus={(e) => e.target.select()}
@@ -701,9 +822,9 @@ export const SupervisorView: React.FC = () => {
                         </label>
                         <input
                           type="number"
+                          inputMode="numeric"
                           name="creches_locais[]"
                           min="0"
-                          placeholder="0"
                           value={ficha.creches_locais === 0 || ficha.creches_locais === '0' ? '' : ficha.creches_locais}
                           onChange={(e) => handleInputChange(index, 'creches_locais', e.target.value)}
                           onFocus={(e) => e.target.select()}
@@ -715,10 +836,10 @@ export const SupervisorView: React.FC = () => {
                         </label>
                         <input
                           type="number"
+                          inputMode="numeric"
                           name="creches_pessoas[]"
                           className="pessoas-input"
                           min="0"
-                          placeholder="0"
                           value={ficha.creches_pessoas === 0 || ficha.creches_pessoas === '0' ? '' : ficha.creches_pessoas}
                           onChange={(e) => handleInputChange(index, 'creches_pessoas', e.target.value)}
                           onFocus={(e) => e.target.select()}
@@ -732,9 +853,9 @@ export const SupervisorView: React.FC = () => {
                         </label>
                         <input
                           type="number"
+                          inputMode="numeric"
                           name="escolas_locais[]"
                           min="0"
-                          placeholder="0"
                           value={ficha.escolas_locais === 0 || ficha.escolas_locais === '0' ? '' : ficha.escolas_locais}
                           onChange={(e) => handleInputChange(index, 'escolas_locais', e.target.value)}
                           onFocus={(e) => e.target.select()}
@@ -746,10 +867,10 @@ export const SupervisorView: React.FC = () => {
                         </label>
                         <input
                           type="number"
+                          inputMode="numeric"
                           name="escolas_pessoas[]"
                           className="pessoas-input"
                           min="0"
-                          placeholder="0"
                           value={ficha.escolas_pessoas === 0 || ficha.escolas_pessoas === '0' ? '' : ficha.escolas_pessoas}
                           onChange={(e) => handleInputChange(index, 'escolas_pessoas', e.target.value)}
                           onFocus={(e) => e.target.select()}
@@ -763,9 +884,9 @@ export const SupervisorView: React.FC = () => {
                         </label>
                         <input
                           type="number"
+                          inputMode="numeric"
                           name="agua_locais[]"
                           min="0"
-                          placeholder="0"
                           value={ficha.agua_locais === 0 || ficha.agua_locais === '0' ? '' : ficha.agua_locais}
                           onChange={(e) => handleInputChange(index, 'agua_locais', e.target.value)}
                           onFocus={(e) => e.target.select()}
@@ -777,10 +898,10 @@ export const SupervisorView: React.FC = () => {
                         </label>
                         <input
                           type="number"
+                          inputMode="numeric"
                           name="agua_pessoas[]"
                           className="pessoas-input"
                           min="0"
-                          placeholder="0"
                           value={ficha.agua_pessoas === 0 || ficha.agua_pessoas === '0' ? '' : ficha.agua_pessoas}
                           onChange={(e) => handleInputChange(index, 'agua_pessoas', e.target.value)}
                           onFocus={(e) => e.target.select()}
@@ -794,9 +915,9 @@ export const SupervisorView: React.FC = () => {
                         </label>
                         <input
                           type="number"
+                          inputMode="numeric"
                           name="outros_locais[]"
                           min="0"
-                          placeholder="0"
                           value={ficha.outros_locais === 0 || ficha.outros_locais === '0' ? '' : ficha.outros_locais}
                           onChange={(e) => handleInputChange(index, 'outros_locais', e.target.value)}
                           onFocus={(e) => e.target.select()}
@@ -808,10 +929,10 @@ export const SupervisorView: React.FC = () => {
                         </label>
                         <input
                           type="number"
+                          inputMode="numeric"
                           name="outros_pessoas[]"
                           className="pessoas-input"
                           min="0"
-                          placeholder="0"
                           value={ficha.outros_pessoas === 0 || ficha.outros_pessoas === '0' ? '' : ficha.outros_pessoas}
                           onChange={(e) => handleInputChange(index, 'outros_pessoas', e.target.value)}
                           onFocus={(e) => e.target.select()}
@@ -837,9 +958,9 @@ export const SupervisorView: React.FC = () => {
                         </label>
                         <input
                           type="number"
+                          inputMode="numeric"
                           name="total_nao[]"
                           min="0"
-                          placeholder="0"
                           value={ficha.total_nao === 0 || ficha.total_nao === '0' ? '' : ficha.total_nao}
                           onChange={(e) => handleInputChange(index, 'total_nao', e.target.value)}
                           onFocus={(e) => e.target.select()}
@@ -873,34 +994,65 @@ export const SupervisorView: React.FC = () => {
             )}
           </section>
 
-          {/* Contabilização Exclusiva do Número de Fichas Deste Lançamento */}
-          <div className="bg-blue-50/90 border border-blue-200 p-4 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-700 mt-2">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-blue-100 text-blue-700 font-bold flex items-center justify-center shrink-0 text-lg">
-                📋
+          {/* Contabilização e Resumo em Tempo Real do Lote */}
+          <div className="bg-gradient-to-r from-blue-50 to-indigo-50/80 border border-blue-200 p-4 rounded-xl space-y-3 mt-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-700">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-blue-100 text-blue-700 font-bold flex items-center justify-center shrink-0 text-lg">
+                  📋
+                </div>
+                <div>
+                  <div className="font-bold text-slate-900 text-sm">
+                    {fichas.length} {fichas.length === 1 ? 'Ficha neste lote a ser lançada' : 'Fichas neste lote a serem lançadas'}
+                  </div>
+                  <div className="text-[11px] text-slate-500 mt-0.5">
+                    Fichas anteriores: <strong>{fichasEnviadasAcumuladas}</strong> &bull; Total acumulado após envio: <strong className="text-blue-900">{fichasEnviadasAcumuladas + fichas.length} fichas</strong>
+                  </div>
+                </div>
               </div>
-              <div>
-                <div className="font-bold text-slate-900 text-sm">
-                  Contabilizando {fichas.length} {fichas.length === 1 ? 'ficha a ser lançada' : 'fichas a serem lançadas'}
-                </div>
-                <div className="text-[11px] text-slate-500 mt-0.5">
-                  Fichas já enviadas anteriormente: <strong>{fichasEnviadasAcumuladas}</strong> &bull; Total acumulado após este envio: <strong className="text-blue-900">{fichasEnviadasAcumuladas + fichas.length} fichas</strong>
-                </div>
+              <div className="shrink-0">
+                <span className="inline-flex items-center gap-1.5 bg-blue-600 text-white font-mono font-bold px-3 py-1.5 rounded-lg text-xs shadow-xs">
+                  <span>Lote Atual:</span>
+                  <span className="text-sm bg-white/20 px-1.5 py-0.5 rounded">{fichas.length} {fichas.length === 1 ? 'ficha' : 'fichas'}</span>
+                </span>
               </div>
             </div>
-            <div className="shrink-0">
-              <span className="inline-flex items-center gap-1.5 bg-blue-600 text-white font-mono font-bold px-3 py-1.5 rounded-lg text-xs shadow-xs">
-                <span>Número de Fichas:</span>
-                <span className="text-sm bg-white/20 px-1.5 py-0.5 rounded">{fichas.length}</span>
-              </span>
+
+            {/* Somatório em Tempo Real dos Dados Digitados */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-blue-200/60 text-xs">
+              <div className="bg-white p-2 rounded-lg border border-blue-100 text-center shadow-2xs">
+                <div className="text-[10px] uppercase font-bold text-slate-500">Locais no Lote</div>
+                <div className="font-mono font-extrabold text-slate-900 text-sm">{liveBatchTotals.locais}</div>
+              </div>
+              <div className="bg-white p-2 rounded-lg border border-emerald-100 text-center shadow-2xs">
+                <div className="text-[10px] uppercase font-bold text-emerald-700">Mobilizados (Sim)</div>
+                <div className="font-mono font-extrabold text-emerald-800 text-sm">{liveBatchTotals.sim}</div>
+              </div>
+              <div className="bg-white p-2 rounded-lg border border-rose-100 text-center shadow-2xs">
+                <div className="text-[10px] uppercase font-bold text-rose-700">Recusas (Não)</div>
+                <div className="font-mono font-extrabold text-rose-800 text-sm">{liveBatchTotals.nao}</div>
+              </div>
+              <div className="bg-white p-2 rounded-lg border border-indigo-100 text-center shadow-2xs">
+                <div className="text-[10px] uppercase font-bold text-indigo-700">Total Abordadas</div>
+                <div className="font-mono font-extrabold text-indigo-900 text-sm">{liveBatchTotals.totalPessoas}</div>
+              </div>
             </div>
           </div>
 
-          {/* Ações do Formulário */}
+          {/* Ações do Formulário com Proteção contra Duplo Clique */}
           <div className="form-actions mt-3">
-            <button type="submit" className="btn btn-primary" title="Enviar para a base do Administrador">
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className={`btn btn-primary ${isSubmitting ? 'opacity-75 cursor-not-allowed' : ''}`}
+              title="Enviar para a base do Administrador"
+            >
               <Send className="w-4 h-4" />
-              <span>➡️ Lançar {fichas.length} {fichas.length === 1 ? 'Ficha' : 'Fichas'} para o Administrador</span>
+              <span>
+                {isSubmitting
+                  ? 'A Sincronizar com o Firebase...'
+                  : `➡️ Lançar ${fichas.length} ${fichas.length === 1 ? 'Ficha' : 'Fichas'} para o Administrador`}
+              </span>
             </button>
           </div>
         </form>

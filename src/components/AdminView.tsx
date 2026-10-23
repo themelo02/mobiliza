@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useApp, ADMIN_CODE } from '../context/AppContext';
 import { Supervisor, Submissao, COMUNAS_SUMBE, UtilizadorLeitura, Coordenacao } from '../types';
+import { exportarFichasParaExcel, formatarDataPt, formatarHoraPt } from '../utils/excelExport';
 import {
   BarChart,
   Bar,
@@ -330,11 +331,96 @@ export const AdminView: React.FC = () => {
   const [filterComuna, setFilterComuna] = useState<string>('todos');
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Estados da Nova Estrutura de Relatórios: 'geral' | 'supervisor' | 'coordenacao'
-  const [relatorioSubView, setRelatorioSubView] = useState<'geral' | 'supervisor' | 'coordenacao'>('geral');
+  // Estados da Estrutura de Relatórios: 'geral' | 'supervisor' | 'data_lancamento' | 'coordenacao'
+  const [relatorioSubView, setRelatorioSubView] = useState<'geral' | 'supervisor' | 'data_lancamento' | 'coordenacao'>('geral');
   const [relatorioSupervisorId, setRelatorioSupervisorId] = useState<string>('todos');
   const [relatorioCoordenacaoId, setRelatorioCoordenacaoId] = useState<string>('todas');
   const [relatorioDataFilter, setRelatorioDataFilter] = useState<string>('todas');
+  const [relatorioDataLancamentoFilter, setRelatorioDataLancamentoFilter] = useState<string>('todas');
+
+  // Agrupamento de submissões por data de lançamento no sistema (dataEnvio / carimbo de submissão)
+  const datasLancamentoAgrupadas = useMemo(() => {
+    const mapa = new Map<
+      string,
+      {
+        dataKey: string; // YYYY-MM-DD
+        dataFormatada: string;
+        dataCompleta: string;
+        submissoes: Submissao[];
+        totalFichas: number;
+        supervisoresNomes: string[];
+        totalLocais: number;
+        totalSim: number;
+        totalNao: number;
+        totalPessoas: number;
+      }
+    >();
+
+    submissoes.forEach((sub) => {
+      // Data de lançamento no sistema: obtida a partir do dataEnvio (se não existir, usa sub.data)
+      const dataKey = (sub.dataEnvio || '').slice(0, 10) || sub.data || 'Sem Data';
+      if (!mapa.has(dataKey)) {
+        let dataFormatada = dataKey;
+        let dataCompleta = dataKey;
+        try {
+          if (dataKey !== 'Sem Data' && dataKey.includes('-')) {
+            const [ano, mes, dia] = dataKey.split('-').map(Number);
+            const dataObj = new Date(ano, mes - 1, dia);
+            dataFormatada = `${String(dia).padStart(2, '0')}/${String(mes).padStart(2, '0')}/${ano}`;
+            dataCompleta = dataObj.toLocaleDateString('pt-PT', {
+              weekday: 'long',
+              day: '2-digit',
+              month: 'long',
+              year: 'numeric',
+            });
+            dataCompleta = dataCompleta.charAt(0).toUpperCase() + dataCompleta.slice(1);
+          }
+        } catch {
+          dataFormatada = dataKey;
+          dataCompleta = dataKey;
+        }
+
+        mapa.set(dataKey, {
+          dataKey,
+          dataFormatada,
+          dataCompleta,
+          submissoes: [],
+          totalFichas: 0,
+          supervisoresNomes: [],
+          totalLocais: 0,
+          totalSim: 0,
+          totalNao: 0,
+          totalPessoas: 0,
+        });
+      }
+
+      const item = mapa.get(dataKey)!;
+      item.submissoes.push(sub);
+      item.totalFichas += sub.fichas?.length || 0;
+      if (!item.supervisoresNomes.includes(sub.supervisorNome)) {
+        item.supervisoresNomes.push(sub.supervisorNome);
+      }
+
+      (sub.fichas || []).forEach((f) => {
+        const locaisFicha =
+          (f.casa_locais || 0) +
+          (f.igrejas_locais || 0) +
+          (f.pracas_locais || 0) +
+          (f.paragem_locais || 0) +
+          (f.creches_locais || 0) +
+          (f.escolas_locais || 0) +
+          (f.agua_locais || 0) +
+          (f.outros_locais || 0);
+        item.totalLocais += locaisFicha;
+        item.totalSim += Number(f.total_sim) || 0;
+        item.totalNao += Number(f.total_nao) || 0;
+      });
+
+      item.totalPessoas = item.totalSim + item.totalNao;
+    });
+
+    return Array.from(mapa.values()).sort((a, b) => b.dataKey.localeCompare(a.dataKey));
+  }, [submissoes]);
 
   // ==============================================================
   // CAMADA LÓGICA AUTOMATIZADA (AUTOMATED FICHA PLANNING LOGIC LAYER)
@@ -1573,6 +1659,34 @@ export const AdminView: React.FC = () => {
     document.body.removeChild(link);
   };
 
+  const [isExportingExcel, setIsExportingExcel] = useState<boolean>(false);
+  const [excelExportToast, setExcelExportToast] = useState<string>('');
+
+  const handleExportExcel = (filtro?: { supervisorId?: string; dataLancamento?: string; titulo?: string }) => {
+    try {
+      setIsExportingExcel(true);
+      exportarFichasParaExcel({
+        submissoes,
+        supervisores,
+        coordenacoes,
+        supervisorFiltroId: filtro?.supervisorId,
+        dataLancamentoFiltro: filtro?.dataLancamento,
+        filtroTitulo: filtro?.titulo,
+      });
+      setExcelExportToast(
+        filtro?.titulo
+          ? `Ficheiro Excel exportado com sucesso (${filtro.titulo})!`
+          : 'Ficheiro Excel (.xlsx) completo exportado com sucesso!'
+      );
+      setTimeout(() => setExcelExportToast(''), 4500);
+    } catch (err) {
+      console.error('Erro ao exportar Excel:', err);
+      alert('Ocorreu um erro ao gerar o ficheiro Excel.');
+    } finally {
+      setIsExportingExcel(false);
+    }
+  };
+
   return (
     <div id="admin-view" className="flex flex-col md:flex-row min-h-screen md:h-screen bg-[#f1f5f9] md:overflow-hidden">
       {/* ============================================================== */}
@@ -1976,6 +2090,19 @@ export const AdminView: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-2 flex-wrap justify-end">
+              {/* BOTÃO EXPORTAR EXCEL (.XLSX) */}
+              <button
+                type="button"
+                onClick={() => handleExportExcel()}
+                disabled={isExportingExcel}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                title="Exportar todas as fichas coletadas para um ficheiro Excel (.xlsx)"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">{isExportingExcel ? 'A Gerar...' : 'Exportar Excel'}</span>
+                <span className="sm:hidden">Excel</span>
+              </button>
+
               {/* BOTÃO SOLICITADO: CADASTRAR COORDENAÇÃO */}
               {!isReadOnly && (
                 <button
@@ -5085,8 +5212,18 @@ export const AdminView: React.FC = () => {
                     )}
                     <button
                       type="button"
+                      onClick={() => handleExportExcel()}
+                      disabled={isExportingExcel}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-2 rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                      title="Descarregar ficheiro Excel (.xlsx) completo com todas as fichas, resumo por supervisor e por datas de lançamento"
+                    >
+                      <FileSpreadsheet className="w-4 h-4" />
+                      <span>{isExportingExcel ? 'A Gerar Excel...' : 'Exportar Excel (.xlsx)'}</span>
+                    </button>
+                    <button
+                      type="button"
                       onClick={exportToCSV}
-                      className="bg-emerald-700 hover:bg-emerald-800 text-white font-semibold px-3 py-2 rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                      className="bg-slate-600 hover:bg-slate-700 text-white font-semibold px-3 py-2 rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
                       title="Descarregar ficheiro CSV com todas as 8 categorias de locais e pessoas"
                     >
                       <Download className="w-4 h-4" />
@@ -5103,46 +5240,76 @@ export const AdminView: React.FC = () => {
                   </div>
                 </div>
 
-                {/* BARRA DE NAVEGAÇÃO DAS 3 FORMAS DE VER O RELATÓRIO: GERAL, POR SUP, POR COORDE */}
+                {/* NOTIFICAÇÃO DE EXPORTAÇÃO EXCEL CONCLUÍDA */}
+                {excelExportToast && (
+                  <div className="bg-emerald-50 border border-emerald-300 text-emerald-800 text-xs px-4 py-2.5 rounded-lg flex items-center justify-between animate-in fade-in duration-200">
+                    <div className="flex items-center gap-2 font-semibold">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>{excelExportToast}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setExcelExportToast('')}
+                      className="text-emerald-700 hover:text-emerald-900 font-bold ml-2 text-xs"
+                    >
+                      &times;
+                    </button>
+                  </div>
+                )}
+
+                {/* BARRA DE NAVEGAÇÃO DAS 4 FORMAS DE VER O RELATÓRIO: GERAL, POR SUP, POR DATA, POR COORDE */}
                 <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-                  <div className="inline-flex bg-slate-100 p-1 rounded-xl border border-slate-200">
+                  <div className="inline-flex bg-slate-100 p-1 rounded-xl border border-slate-200 overflow-x-auto">
                     <button
                       type="button"
                       onClick={() => setRelatorioSubView('geral')}
-                      className={`px-3 sm:px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer flex items-center justify-center gap-2 ${
+                      className={`px-3 sm:px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5 whitespace-nowrap ${
                         relatorioSubView === 'geral'
                           ? 'bg-[#2667ff] text-white shadow-xs'
                           : 'text-slate-600 hover:text-slate-900'
                       }`}
                     >
                       <Layers className="w-4 h-4" />
-                      <span>1. Relatório Geral (Consolidado)</span>
+                      <span>1. Geral (Consolidado)</span>
                     </button>
 
                     <button
                       type="button"
                       onClick={() => setRelatorioSubView('supervisor')}
-                      className={`px-3 sm:px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer flex items-center justify-center gap-2 ${
+                      className={`px-3 sm:px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5 whitespace-nowrap ${
                         relatorioSubView === 'supervisor'
                           ? 'bg-indigo-600 text-white shadow-xs'
                           : 'text-slate-600 hover:text-slate-900'
                       }`}
                     >
                       <Users className="w-4 h-4" />
-                      <span>2. Separado por Supervisor (Por Sup.)</span>
+                      <span>2. Por Supervisor</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setRelatorioSubView('data_lancamento')}
+                      className={`px-3 sm:px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5 whitespace-nowrap ${
+                        relatorioSubView === 'data_lancamento'
+                          ? 'bg-emerald-600 text-white shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <CalendarDays className="w-4 h-4" />
+                      <span>3. Por Data de Lançamento</span>
                     </button>
 
                     <button
                       type="button"
                       onClick={() => setRelatorioSubView('coordenacao')}
-                      className={`px-3 sm:px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer flex items-center justify-center gap-2 ${
+                      className={`px-3 sm:px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5 whitespace-nowrap ${
                         relatorioSubView === 'coordenacao'
                           ? 'bg-purple-600 text-white shadow-xs'
                           : 'text-slate-600 hover:text-slate-900'
                       }`}
                     >
                       <Compass className="w-4 h-4" />
-                      <span>3. Separado por Coordenação (Por Coorde.)</span>
+                      <span>4. Por Coordenação</span>
                     </button>
                   </div>
 
@@ -5603,20 +5770,44 @@ export const AdminView: React.FC = () => {
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-semibold text-slate-600">Filtrar Supervisor:</span>
-                      <select
-                        value={relatorioSupervisorId}
-                        onChange={(e) => setRelatorioSupervisorId(e.target.value)}
-                        className="py-1.5 px-3 text-xs border border-slate-300 rounded-lg bg-white font-semibold text-slate-800 outline-none"
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleExportExcel(
+                            relatorioSupervisorId !== 'todos'
+                              ? {
+                                  supervisorId: relatorioSupervisorId,
+                                  titulo: `supervisor_${
+                                    supervisores.find((s) => s.id === relatorioSupervisorId)?.nome || 'individual'
+                                  }`,
+                                }
+                              : { titulo: 'todos_supervisores' }
+                          )
+                        }
+                        disabled={isExportingExcel}
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                        title="Exportar fichas dos supervisores para Excel (.xlsx)"
                       >
-                        <option value="todos">Todos os 9 Supervisores</option>
-                        {supervisores.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.nome} ({s.codigo}) &bull; {s.comuna}
-                          </option>
-                        ))}
-                      </select>
+                        <FileSpreadsheet className="w-3.5 h-3.5" />
+                        <span>Exportar Excel</span>
+                      </button>
+
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-semibold text-slate-600">Filtrar:</span>
+                        <select
+                          value={relatorioSupervisorId}
+                          onChange={(e) => setRelatorioSupervisorId(e.target.value)}
+                          className="py-1.5 px-3 text-xs border border-slate-300 rounded-lg bg-white font-semibold text-slate-800 outline-none"
+                        >
+                          <option value="todos">Todos os Supervisores ({supervisores.length})</option>
+                          {supervisores.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.nome} ({s.codigo}) &bull; {s.comuna}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
                   </div>
 
@@ -5677,6 +5868,23 @@ export const AdminView: React.FC = () => {
                                   <span className="font-bold text-amber-800 font-mono">
                                     {sc.fichasRestantes} fichas
                                   </span>
+                                </div>
+                                <div className="border-l border-indigo-200 pl-3">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleExportExcel({
+                                        supervisorId: sc.supervisor.id,
+                                        titulo: `supervisor_${sc.supervisor.nome}`,
+                                      })
+                                    }
+                                    disabled={isExportingExcel}
+                                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] px-2.5 py-1 rounded-lg flex items-center gap-1 shadow-2xs transition cursor-pointer"
+                                    title={`Exportar fichas de ${sc.supervisor.nome} para Excel`}
+                                  >
+                                    <FileSpreadsheet className="w-3 h-3" />
+                                    <span>Excel</span>
+                                  </button>
                                 </div>
                               </div>
                             </div>
@@ -5858,7 +6066,448 @@ export const AdminView: React.FC = () => {
               )}
 
               {/* ============================================================== */}
-              {/* SUB-VISTA 3: SEPARADO POR COORDENAÇÃO (POR COORDE.) */}
+              {/* SUB-VISTA 3: SEPARADO POR DATA DE LANÇAMENTO (POR DATA) */}
+              {/* ============================================================== */}
+              {relatorioSubView === 'data_lancamento' && (
+                <div className="space-y-6">
+                  {/* Seletor da Data de Lançamento & Exportação */}
+                  <div className="bg-white p-4 sm:p-5 rounded-xl border border-slate-200 shadow-xs space-y-4">
+                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center justify-center font-bold shrink-0">
+                          <CalendarDays className="w-5 h-5 text-emerald-600" />
+                        </div>
+                        <div>
+                          <div className="font-bold text-slate-900 text-sm sm:text-base flex items-center gap-2">
+                            <span>Relatório de Fichas por Data de Lançamento</span>
+                            <span className="text-[10px] bg-emerald-100 text-emerald-800 font-mono font-bold px-2 py-0.5 rounded border border-emerald-200">
+                              Data de Envio no Sistema
+                            </span>
+                          </div>
+                          <div className="text-xs text-slate-500 mt-0.5">
+                            Acompanhe e audite as fichas organizadas rigorosamente pela data e hora em que foram inseridas e sincronizadas pelos supervisores na base de dados.
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleExportExcel({
+                              dataLancamento:
+                                relatorioDataLancamentoFilter !== 'todas' ? relatorioDataLancamentoFilter : undefined,
+                              titulo:
+                                relatorioDataLancamentoFilter !== 'todas'
+                                  ? `data_lancamento_${relatorioDataLancamentoFilter}`
+                                  : 'todas_datas_lancamento',
+                            })
+                          }
+                          disabled={isExportingExcel}
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-2 rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                          title="Exportar dados desta seleção para ficheiro Excel (.xlsx)"
+                        >
+                          <FileSpreadsheet className="w-4 h-4" />
+                          <span>
+                            {isExportingExcel
+                              ? 'A Gerar...'
+                              : relatorioDataLancamentoFilter !== 'todas'
+                              ? 'Exportar Esta Data (.xlsx)'
+                              : 'Exportar Todas as Datas (.xlsx)'}
+                          </span>
+                        </button>
+
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-semibold text-slate-600">Filtrar Data:</span>
+                          <select
+                            value={relatorioDataLancamentoFilter}
+                            onChange={(e) => setRelatorioDataLancamentoFilter(e.target.value)}
+                            className="py-1.5 px-3 text-xs border border-slate-300 rounded-lg bg-white font-semibold text-slate-800 outline-none max-w-xs"
+                          >
+                            <option value="todas">
+                              Todas as Datas ({datasLancamentoAgrupadas.length} dias, {submissoes.length} envios)
+                            </option>
+                            {datasLancamentoAgrupadas.map((d) => (
+                              <option key={d.dataKey} value={d.dataKey}>
+                                {d.dataFormatada} &bull; {d.totalFichas} fichas ({d.submissoes.length} envios)
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Resumo Consolidado do Filtro de Data */}
+                    {(() => {
+                      const gruposFiltrados = datasLancamentoAgrupadas.filter(
+                        (d) => relatorioDataLancamentoFilter === 'todas' || d.dataKey === relatorioDataLancamentoFilter
+                      );
+                      const totalEnviosFiltro = gruposFiltrados.reduce((acc, g) => acc + g.submissoes.length, 0);
+                      const totalFichasFiltro = gruposFiltrados.reduce((acc, g) => acc + g.totalFichas, 0);
+                      const totalLocaisFiltro = gruposFiltrados.reduce((acc, g) => acc + g.totalLocais, 0);
+                      const totalSimFiltro = gruposFiltrados.reduce((acc, g) => acc + g.totalSim, 0);
+                      const totalNaoFiltro = gruposFiltrados.reduce((acc, g) => acc + g.totalNao, 0);
+                      const totalPessoasFiltro = totalSimFiltro + totalNaoFiltro;
+                      const taxaAdesao =
+                        totalPessoasFiltro > 0 ? ((totalSimFiltro / totalPessoasFiltro) * 100).toFixed(1) : '100';
+
+                      // Supervisores únicos envolvidos
+                      const supervisoresUnicosSet = new Set<string>();
+                      gruposFiltrados.forEach((g) => g.supervisoresNomes.forEach((nome) => supervisoresUnicosSet.add(nome)));
+
+                      return (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 pt-2 border-t border-slate-100">
+                          <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200">
+                            <span className="text-[10px] text-slate-500 font-bold block uppercase">Envios Registados</span>
+                            <span className="font-mono font-bold text-slate-800 text-sm">
+                              {totalEnviosFiltro} remessas
+                            </span>
+                          </div>
+
+                          <div className="bg-blue-50 p-2.5 rounded-lg border border-blue-100">
+                            <span className="text-[10px] text-blue-600 font-bold block uppercase">Fichas Lançadas</span>
+                            <span className="font-mono font-bold text-blue-900 text-sm">
+                              {totalFichasFiltro} fichas
+                            </span>
+                          </div>
+
+                          <div className="bg-indigo-50 p-2.5 rounded-lg border border-indigo-100">
+                            <span className="text-[10px] text-indigo-600 font-bold block uppercase">Supervisores Ativos</span>
+                            <span className="font-mono font-bold text-indigo-900 text-sm">
+                              {supervisoresUnicosSet.size} supervisores
+                            </span>
+                          </div>
+
+                          <div className="bg-amber-50 p-2.5 rounded-lg border border-amber-100">
+                            <span className="text-[10px] text-amber-700 font-bold block uppercase">Locais Cobertos</span>
+                            <span className="font-mono font-bold text-amber-900 text-sm">
+                              {totalLocaisFiltro} locais
+                            </span>
+                          </div>
+
+                          <div className="bg-emerald-50 p-2.5 rounded-lg border border-emerald-100">
+                            <span className="text-[10px] text-emerald-700 font-bold block uppercase">Mobilizados (Sim)</span>
+                            <span className="font-mono font-bold text-emerald-800 text-sm">
+                              {totalSimFiltro.toLocaleString('pt-PT')}
+                            </span>
+                          </div>
+
+                          <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200">
+                            <span className="text-[10px] text-slate-500 font-bold block uppercase">Adesão Comunitária</span>
+                            <span className="font-mono font-bold text-emerald-700 text-sm">
+                              {taxaAdesao}% ({totalNaoFiltro} não)
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  {/* Lista de Grupos por Data de Lançamento */}
+                  {datasLancamentoAgrupadas.length === 0 ? (
+                    <div className="bg-white p-8 rounded-xl border border-slate-200 text-center text-slate-500 space-y-2">
+                      <FileSpreadsheet className="w-10 h-10 text-slate-300 mx-auto" />
+                      <div className="font-bold text-slate-700">Nenhuma ficha lançada no sistema até ao momento.</div>
+                      <p className="text-xs text-slate-400">
+                        Quando os supervisores preencherem fichas no terreno ou através do formulário, cada ficha ficará registrada pela sua data exata de envio.
+                      </p>
+                    </div>
+                  ) : (
+                    datasLancamentoAgrupadas
+                      .filter(
+                        (item) => relatorioDataLancamentoFilter === 'todas' || item.dataKey === relatorioDataLancamentoFilter
+                      )
+                      .map((dataGroup) => (
+                        <div
+                          key={dataGroup.dataKey}
+                          className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden"
+                        >
+                          {/* Cabeçalho da Data de Lançamento */}
+                          <div className="p-4 sm:p-5 bg-gradient-to-r from-slate-50 via-white to-emerald-50/40 border-b border-slate-200">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                              <div className="flex items-center gap-3">
+                                <div className="w-11 h-11 rounded-xl bg-emerald-600 text-white font-mono font-black flex flex-col items-center justify-center text-xs shadow-xs shrink-0">
+                                  <span>{dataGroup.dataKey.split('-')[2] || 'D'}</span>
+                                  <span className="text-[9px] uppercase font-bold opacity-80">
+                                    {dataGroup.dataKey.split('-')[1] || 'M'}
+                                  </span>
+                                </div>
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <h4 className="font-bold text-slate-900 text-base sm:text-lg">
+                                      {dataGroup.dataFormatada}
+                                    </h4>
+                                    <span className="text-xs font-semibold text-slate-500">
+                                      &bull; {dataGroup.dataCompleta}
+                                    </span>
+                                  </div>
+                                  <div className="text-xs text-slate-500 flex flex-wrap items-center gap-2 mt-1">
+                                    <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded font-mono font-bold">
+                                      {dataGroup.totalFichas} fichas lançadas
+                                    </span>
+                                    <span>&bull;</span>
+                                    <span>{dataGroup.submissoes.length} envios realizados</span>
+                                    <span>&bull;</span>
+                                    <span>{dataGroup.supervisoresNomes.length} supervisores ativos</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2 self-start sm:self-auto">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleExportExcel({
+                                      dataLancamento: dataGroup.dataKey,
+                                      titulo: `data_${dataGroup.dataKey}`,
+                                    })
+                                  }
+                                  disabled={isExportingExcel}
+                                  className="bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                                  title={`Exportar todas as fichas lançadas no dia ${dataGroup.dataFormatada} para Excel`}
+                                >
+                                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                                  <span>Exportar Este Dia (.xlsx)</span>
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Supervisores Ativos neste Dia */}
+                            <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap items-center gap-2">
+                              <span className="text-xs font-semibold text-slate-500 flex items-center gap-1">
+                                <Users className="w-3.5 h-3.5 text-slate-400" />
+                                <span>Supervisores que lançaram nesta data:</span>
+                              </span>
+                              {dataGroup.supervisoresNomes.map((nome, idx) => {
+                                const fichasDoSupNestaData = dataGroup.submissoes
+                                  .filter((s) => s.supervisorNome === nome)
+                                  .reduce((acc, s) => acc + (s.fichas?.length || 0), 0);
+                                return (
+                                  <span
+                                    key={idx}
+                                    className="bg-indigo-50 text-indigo-900 border border-indigo-200 text-xs px-2.5 py-0.5 rounded-full font-medium flex items-center gap-1.5"
+                                  >
+                                    <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
+                                    <span>{nome}</span>
+                                    <strong className="text-indigo-700 font-mono">({fichasDoSupNestaData} fichas)</strong>
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          {/* Lista das Submissões e Fichas Lançadas Nesta Data */}
+                          <div className="p-4 sm:p-5 space-y-4">
+                            <div className="text-xs font-bold text-slate-700 uppercase tracking-wide">
+                              Envios / Remessas Registadas no Sistema ({dataGroup.submissoes.length})
+                            </div>
+
+                            <div className="space-y-4">
+                              {dataGroup.submissoes.map((sub, subIdx) => {
+                                const horaEnvioFormatada = formatarHoraPt(sub.dataEnvio);
+                                const totalLocaisSub = (sub.fichas || []).reduce((acc, f) => {
+                                  return (
+                                    acc +
+                                    (f.casa_locais || 0) +
+                                    (f.igrejas_locais || 0) +
+                                    (f.pracas_locais || 0) +
+                                    (f.paragem_locais || 0) +
+                                    (f.creches_locais || 0) +
+                                    (f.escolas_locais || 0) +
+                                    (f.agua_locais || 0) +
+                                    (f.outros_locais || 0)
+                                  );
+                                }, 0);
+
+                                return (
+                                  <div
+                                    key={sub.id || subIdx}
+                                    className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50/60 transition hover:border-slate-300"
+                                  >
+                                    {/* Cabeçalho do Envio com Horário e Supervisor */}
+                                    <div className="p-3 bg-white border-b border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-3">
+                                      <div className="flex items-center gap-3">
+                                        <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center font-mono font-bold text-xs border border-slate-200">
+                                          #{subIdx + 1}
+                                        </div>
+                                        <div>
+                                          <div className="flex items-center gap-2 flex-wrap">
+                                            <span className="font-bold text-slate-900 text-sm">
+                                              {sub.supervisorNome}
+                                            </span>
+                                            <span className="text-[10px] bg-slate-100 text-slate-700 font-mono px-1.5 py-0.5 rounded border border-slate-200">
+                                              {sub.municipio || 'Sumbe'}
+                                            </span>
+                                            <span
+                                              className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                                                sub.status === 'Validado'
+                                                  ? 'bg-emerald-100 text-emerald-800'
+                                                  : 'bg-amber-100 text-amber-800'
+                                              }`}
+                                            >
+                                              {sub.status || 'Validado'}
+                                            </span>
+                                          </div>
+                                          <div className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
+                                            <span className="flex items-center gap-1 font-mono text-slate-600">
+                                              <Clock className="w-3 h-3 text-slate-400" />
+                                              Hora de Envio: <strong>{horaEnvioFormatada}</strong>
+                                            </span>
+                                            <span>&bull;</span>
+                                            <span>Data no Terreno: <strong>{formatarDataPt(sub.data)}</strong></span>
+                                            {sub.diaCampanha && (
+                                              <>
+                                                <span>&bull;</span>
+                                                <span className="font-semibold text-indigo-700">
+                                                  Dia {sub.diaCampanha} de Campanha
+                                                </span>
+                                              </>
+                                            )}
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      {/* Métricas e Botões de Ação do Envio */}
+                                      <div className="flex items-center gap-2 self-end md:self-auto">
+                                        <div className="text-right text-xs mr-2 hidden sm:block">
+                                          <div className="font-bold text-slate-800">
+                                            {sub.fichas?.length || 0} fichas &bull; {totalLocaisSub} locais
+                                          </div>
+                                          <div className="text-[11px]">
+                                            <span className="text-emerald-700 font-bold">Sim: {sub.totalSim}</span>
+                                            <span className="text-slate-400 mx-1">/</span>
+                                            <span className="text-rose-700 font-bold">Não: {sub.totalNao}</span>
+                                          </div>
+                                        </div>
+
+                                        <button
+                                          type="button"
+                                          onClick={() => setSelectedSubmission(sub)}
+                                          className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-semibold px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 shadow-2xs transition cursor-pointer"
+                                          title="Ver ficha completa detalhada"
+                                        >
+                                          <Eye className="w-3.5 h-3.5 text-blue-600" />
+                                          <span className="hidden sm:inline">Ver Detalhes</span>
+                                        </button>
+
+                                        {!isReadOnly && (
+                                          <button
+                                            type="button"
+                                            onClick={() => handleStartAdminEditSub(sub)}
+                                            className="bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 font-semibold px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 shadow-2xs transition cursor-pointer"
+                                            title="Editar ficha caso o supervisor tenha cometido erros de lançamento"
+                                          >
+                                            <Edit3 className="w-3.5 h-3.5 text-indigo-600" />
+                                            <span>Editar</span>
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+
+                                    {/* Tabela Resumo das Fichas Deste Envio */}
+                                    <div className="overflow-x-auto">
+                                      <table className="w-full text-left text-xs border-collapse">
+                                        <thead>
+                                          <tr className="bg-slate-100/80 text-slate-600 border-b border-slate-200 text-[11px]">
+                                            <th className="py-2 px-3">Ficha Nº</th>
+                                            <th className="py-2 px-3">Bairro</th>
+                                            <th className="py-2 px-2 text-center">1. Casas</th>
+                                            <th className="py-2 px-2 text-center">2. Igrejas</th>
+                                            <th className="py-2 px-2 text-center">3. Praças</th>
+                                            <th className="py-2 px-2 text-center">4. Paragens</th>
+                                            <th className="py-2 px-2 text-center">5. Creches</th>
+                                            <th className="py-2 px-2 text-center">6. Escolas</th>
+                                            <th className="py-2 px-2 text-center">7. Água</th>
+                                            <th className="py-2 px-2 text-center">8. Outros</th>
+                                            <th className="py-2 px-3 text-center font-bold text-slate-800">Locais</th>
+                                            <th className="py-2 px-3 text-center font-bold text-emerald-700 bg-emerald-50/60">
+                                              Sim
+                                            </th>
+                                            <th className="py-2 px-3 text-center font-bold text-rose-700 bg-rose-50/60">
+                                              Não
+                                            </th>
+                                          </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-200/60 bg-white">
+                                          {(sub.fichas || []).map((f, fIdx) => {
+                                            const locaisLinha =
+                                              (f.casa_locais || 0) +
+                                              (f.igrejas_locais || 0) +
+                                              (f.pracas_locais || 0) +
+                                              (f.paragem_locais || 0) +
+                                              (f.creches_locais || 0) +
+                                              (f.escolas_locais || 0) +
+                                              (f.agua_locais || 0) +
+                                              (f.outros_locais || 0);
+
+                                            return (
+                                              <tr key={f.id || fIdx} className="hover:bg-slate-50 transition">
+                                                <td className="py-2 px-3 font-mono font-bold text-slate-700">
+                                                  #{f.numeroFicha || fIdx + 1}
+                                                </td>
+                                                <td className="py-2 px-3 font-semibold text-slate-900 whitespace-nowrap">
+                                                  {f.bairro || 'Sem Bairro'}
+                                                </td>
+                                                <td className="py-2 px-2 text-center font-mono">
+                                                  <span className="text-slate-800 font-medium">{f.casa_locais || 0}</span>
+                                                  <span className="text-[10px] text-blue-600 ml-1">({f.casa_pessoas || 0})</span>
+                                                </td>
+                                                <td className="py-2 px-2 text-center font-mono">
+                                                  <span className="text-slate-800 font-medium">{f.igrejas_locais || 0}</span>
+                                                  <span className="text-[10px] text-blue-600 ml-1">({f.igrejas_pessoas || 0})</span>
+                                                </td>
+                                                <td className="py-2 px-2 text-center font-mono">
+                                                  <span className="text-slate-800 font-medium">{f.pracas_locais || 0}</span>
+                                                  <span className="text-[10px] text-blue-600 ml-1">({f.pracas_pessoas || 0})</span>
+                                                </td>
+                                                <td className="py-2 px-2 text-center font-mono">
+                                                  <span className="text-slate-800 font-medium">{f.paragem_locais || 0}</span>
+                                                  <span className="text-[10px] text-blue-600 ml-1">({f.paragem_pessoas || 0})</span>
+                                                </td>
+                                                <td className="py-2 px-2 text-center font-mono">
+                                                  <span className="text-slate-800 font-medium">{f.creches_locais || 0}</span>
+                                                  <span className="text-[10px] text-blue-600 ml-1">({f.creches_pessoas || 0})</span>
+                                                </td>
+                                                <td className="py-2 px-2 text-center font-mono">
+                                                  <span className="text-slate-800 font-medium">{f.escolas_locais || 0}</span>
+                                                  <span className="text-[10px] text-blue-600 ml-1">({f.escolas_pessoas || 0})</span>
+                                                </td>
+                                                <td className="py-2 px-2 text-center font-mono">
+                                                  <span className="text-slate-800 font-medium">{f.agua_locais || 0}</span>
+                                                  <span className="text-[10px] text-blue-600 ml-1">({f.agua_pessoas || 0})</span>
+                                                </td>
+                                                <td className="py-2 px-2 text-center font-mono">
+                                                  <span className="text-slate-800 font-medium">{f.outros_locais || 0}</span>
+                                                  <span className="text-[10px] text-blue-600 ml-1">({f.outros_pessoas || 0})</span>
+                                                </td>
+                                                <td className="py-2 px-3 text-center font-mono font-bold text-slate-800">
+                                                  {locaisLinha}
+                                                </td>
+                                                <td className="py-2 px-3 text-center font-mono font-bold text-emerald-700 bg-emerald-50/40">
+                                                  {f.total_sim}
+                                                </td>
+                                                <td className="py-2 px-3 text-center font-mono font-bold text-rose-700 bg-rose-50/40">
+                                                  {f.total_nao}
+                                                </td>
+                                              </tr>
+                                            );
+                                          })}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                  )}
+                </div>
+              )}
+
+              {/* ============================================================== */}
+              {/* SUB-VISTA 4: SEPARADO POR COORDENAÇÃO (POR COORDE.) */}
               {/* ============================================================== */}
               {relatorioSubView === 'coordenacao' && (
                 <div className="space-y-6">

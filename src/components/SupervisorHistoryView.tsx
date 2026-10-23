@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { Submissao, FichaAtividade } from '../types';
 import {
@@ -18,6 +18,7 @@ import {
   MapPin,
   Clock,
   Sparkles,
+  Search,
 } from 'lucide-react';
 
 interface EditableFichaState {
@@ -67,6 +68,20 @@ export const SupervisorHistoryView: React.FC = () => {
   const mySubmissions = submissoes.filter((s) =>
     userSession?.tipo === 'admin' ? true : s.supervisorId === supervisorId
   );
+
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const filteredSubmissions = useMemo(() => {
+    if (!searchTerm.trim()) return mySubmissions;
+    const term = searchTerm.toLowerCase().trim();
+    return mySubmissions.filter((s) => {
+      const matchDate = (s.data || '').toLowerCase().includes(term);
+      const matchDia = `dia ${s.diaCampanha || 1}`.includes(term);
+      const matchBairros = (s.fichas || []).some((f) => (f.bairro || '').toLowerCase().includes(term));
+      const matchComuna = (s.fichas || []).some((f) => (f.comuna || '').toLowerCase().includes(term));
+      return matchDate || matchDia || matchBairros || matchComuna;
+    });
+  }, [mySubmissions, searchTerm]);
 
   const totalPessoasMinhas = mySubmissions.reduce((acc, s) => acc + s.totalPessoas, 0);
   const totalFichasMinhas = mySubmissions.reduce((acc, s) => acc + (s.fichas ? s.fichas.length : 0), 0);
@@ -360,9 +375,26 @@ export const SupervisorHistoryView: React.FC = () => {
 
       {/* Lista de Envios */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
-        <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-          <h2 className="font-bold text-slate-800 text-sm">Todas as Remessas Enviadas</h2>
-          <span className="text-xs text-slate-500">{mySubmissions.length} remessa(s)</span>
+        <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <h2 className="font-bold text-slate-800 text-sm">Todas as Remessas Enviadas</h2>
+            <span className="text-xs bg-slate-100 text-slate-700 font-mono px-2 py-0.5 rounded-full font-bold">
+              {filteredSubmissions.length} {filteredSubmissions.length === 1 ? 'remessa' : 'remessas'}
+            </span>
+          </div>
+
+          {mySubmissions.length > 0 && (
+            <div className="relative max-w-xs w-full">
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Pesquisar por data, dia ou bairro..."
+                className="w-full text-xs py-1.5 pl-8 pr-3 border border-slate-300 rounded-lg outline-none focus:ring-1 focus:ring-[#2667ff] bg-slate-50"
+              />
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            </div>
+          )}
         </div>
 
         {mySubmissions.length === 0 ? (
@@ -371,9 +403,13 @@ export const SupervisorHistoryView: React.FC = () => {
             <p className="text-sm font-medium text-slate-600">Ainda não enviou nenhuma ficha.</p>
             <p className="text-xs mt-1">Clique em "Preencher Nova Ficha" para registar os dados de hoje.</p>
           </div>
+        ) : filteredSubmissions.length === 0 ? (
+          <div className="p-8 text-center text-slate-400 text-xs">
+            Nenhuma remessa encontrada para a pesquisa "{searchTerm}".
+          </div>
         ) : (
           <div className="divide-y divide-slate-100">
-            {mySubmissions.map((sub) => (
+            {filteredSubmissions.map((sub) => (
               <div
                 key={sub.id}
                 className="p-4 sm:p-5 hover:bg-slate-50 transition flex flex-col sm:flex-row sm:items-center justify-between gap-4"

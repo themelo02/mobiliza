@@ -2060,60 +2060,59 @@ export const AdminView: React.FC = () => {
       {/* ============================================================== */}
       <main className="flex-1 flex flex-col h-full overflow-y-auto bg-slate-100">
         {/* Top Header Responsivo com Botão Hambúrguer e Botão Cadastrar Coordenação */}
-        <header className="bg-white border-b border-slate-200 px-4 sm:px-6 py-3 flex flex-col gap-2.5 sticky top-0 z-20 shadow-xs">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5">
+        <header className="bg-white border-b border-slate-200 px-3 sm:px-6 py-2.5 sm:py-3 flex flex-col gap-2 sticky top-0 z-20 shadow-xs">
+          <div className="flex items-center justify-between gap-2.5 sm:gap-3">
+            <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 flex-1">
               {/* Botão Menu Mobile */}
               <button
                 type="button"
                 onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-                className="md:hidden p-1.5 rounded-lg text-slate-700 hover:bg-slate-100 border border-slate-200 transition cursor-pointer"
+                className="md:hidden p-1.5 rounded-lg text-slate-700 hover:bg-slate-100 border border-slate-200 transition cursor-pointer shrink-0"
                 title="Abrir Menu de Navegação"
               >
                 {isMobileMenuOpen ? <X className="w-5 h-5 text-slate-900" /> : <Menu className="w-5 h-5 text-slate-900" />}
               </button>
 
-              <div>
-                <h2 className="text-base sm:text-lg font-bold text-slate-900 leading-tight">
+              <div className="min-w-0 flex-1">
+                <h2 className="text-sm sm:text-lg font-bold text-slate-900 leading-tight truncate sm:whitespace-normal">
                   {activeTab === 'dashboard' && 'Visão Geral & Gráficos de Mobilização'}
-                  {activeTab === 'diario' && 'Controlo Diário de Fichas Lançadas & Metas'}
-                  {activeTab === 'coordenacoes' && 'Coordenações do Sumbe (1 a 2 Supervisores)'}
-                  {activeTab === 'supervisores' && 'Supervisores Cadastrados, Códigos & Metas'}
-                  {activeTab === 'leitores' && 'Utilizadores Só de Leitura (Consulta & Auditoria)'}
-                  {activeTab === 'relatorios' && 'Fichas e Relatórios Recebidos no Firebase'}
-                  {activeTab === 'configuracoes' && 'Definições da Base de Dados Firebase & Código de Acesso'}
+                  {activeTab === 'diario' && 'Controlo Diário de Fichas & Metas'}
+                  {activeTab === 'coordenacoes' && 'Coordenações do Sumbe (1-2 Sup)'}
+                  {activeTab === 'supervisores' && 'Supervisores Cadastrados & Metas'}
+                  {activeTab === 'leitores' && 'Utilizadores Só de Leitura'}
+                  {activeTab === 'relatorios' && 'Fichas e Relatórios Recebidos'}
+                  {activeTab === 'configuracoes' && 'Definições da Base de Dados & Código'}
                 </h2>
-                <p className="text-[11px] text-slate-500 hidden sm:block">
+                <p className="text-[11px] text-slate-500 hidden sm:block truncate">
                   Município do Sumbe, Província do Cuanza-Sul &bull; Sincronização em tempo real
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 flex-wrap justify-end">
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
               {/* BOTÃO EXPORTAR EXCEL (.XLSX) */}
               <button
                 type="button"
                 onClick={() => handleExportExcel()}
                 disabled={isExportingExcel}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-2.5 sm:px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-xs transition cursor-pointer shrink-0"
                 title="Exportar todas as fichas coletadas para um ficheiro Excel (.xlsx)"
               >
-                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <FileSpreadsheet className="w-3.5 h-3.5 shrink-0" />
                 <span className="hidden sm:inline">{isExportingExcel ? 'A Gerar...' : 'Exportar Excel'}</span>
-                <span className="sm:hidden">Excel</span>
+                <span className="sm:hidden">{isExportingExcel ? '...' : 'Excel'}</span>
               </button>
 
-              {/* BOTÃO SOLICITADO: CADASTRAR COORDENAÇÃO */}
+              {/* BOTÃO SOLICITADO: CADASTRAR COORDENAÇÃO (Disponível no drawer móvel e aqui no desktop) */}
               {!isReadOnly && (
                 <button
                   type="button"
                   onClick={() => setShowAddCoordenacaoModal(true)}
-                  className="bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                  className="hidden sm:flex bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs px-3 py-1.5 rounded-lg items-center gap-1.5 shadow-xs transition cursor-pointer shrink-0"
                   title="Cadastrar nova coordenação no Sumbe (cada coordenação tem 1 a 2 supervisores)"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Cadastrar Coordenação</span>
-                  <span className="sm:hidden">+ Coordenação</span>
+                  <span>Cadastrar Coordenação</span>
                 </button>
               )}
 
@@ -2121,12 +2120,11 @@ export const AdminView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setActiveScreen('formulario')}
-                  className="bg-[#2667ff] hover:bg-[#1a53db] text-white font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                  className="hidden sm:flex bg-[#2667ff] hover:bg-[#1a53db] text-white font-bold text-xs px-3 py-1.5 rounded-lg items-center gap-1.5 shadow-xs transition cursor-pointer shrink-0"
                   title="Abrir o formulário de preenchimento de fichas"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Preencher Ficha</span>
-                  <span className="sm:hidden">Ficha</span>
+                  <span>Preencher Ficha</span>
                 </button>
               )}
 
@@ -2926,33 +2924,10 @@ export const AdminView: React.FC = () => {
                     </p>
                   </div>
 
-                  {/* Toggle para alternar visualização por Supervisor ou por Bairro */}
                   <div className="flex items-center gap-2">
-                    <span className="text-[11px] font-semibold text-slate-500 hidden sm:inline">Visualizar barras por:</span>
-                    <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs">
-                      <button
-                        type="button"
-                        onClick={() => setAcceptanceViewMode('supervisores')}
-                        className={`px-3 py-1 rounded-md font-semibold transition cursor-pointer ${
-                          acceptanceViewMode === 'supervisores'
-                            ? 'bg-[#2667ff] text-white shadow-xs'
-                            : 'text-slate-600 hover:text-slate-900'
-                        }`}
-                      >
-                        Por Supervisor
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setAcceptanceViewMode('bairros')}
-                        className={`px-3 py-1 rounded-md font-semibold transition cursor-pointer ${
-                          acceptanceViewMode === 'bairros'
-                            ? 'bg-[#2667ff] text-white shadow-xs'
-                            : 'text-slate-600 hover:text-slate-900'
-                        }`}
-                      >
-                        Por Bairro
-                      </button>
-                    </div>
+                    <span className="text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-lg">
+                      Métricas por Supervisor
+                    </span>
                   </div>
                 </div>
 
@@ -3087,14 +3062,12 @@ export const AdminView: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* GRÁFICO 2: BARRAS COMPARATIVAS POR SUPERVISOR / BAIRRO (8 colunas) */}
+                  {/* GRÁFICO 2: BARRAS COMPARATIVAS POR SUPERVISOR (8 colunas) */}
                   <div className="lg:col-span-8 bg-slate-50/90 p-4 rounded-xl border border-slate-200 flex flex-col justify-between">
                     <div>
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 mb-2">
                         <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                          {acceptanceViewMode === 'supervisores'
-                            ? 'Taxa % de Aceitação e Rejeição por Supervisor'
-                            : 'Taxa % de Aceitação e Rejeição nos Bairros do Sumbe'}
+                          Taxa % de Aceitação e Rejeição por Supervisor
                         </h4>
                         <span className="text-[11px] text-slate-500">
                           Valores em percentagem (%)
@@ -3104,11 +3077,7 @@ export const AdminView: React.FC = () => {
                       <div className="h-64 w-full">
                         <ResponsiveContainer width="100%" height="100%">
                           <BarChart
-                            data={
-                              acceptanceViewMode === 'supervisores'
-                                ? supervisorAcceptanceData
-                                : bairroAcceptanceData.slice(0, 8)
-                            }
+                            data={supervisorAcceptanceData}
                             margin={{ top: 10, right: 15, left: -15, bottom: 25 }}
                           >
                             <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
@@ -3170,10 +3139,7 @@ export const AdminView: React.FC = () => {
                     {/* Resumo em mini-tabela rápida das taxas */}
                     <div className="mt-3 pt-3 border-t border-slate-200">
                       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 text-[11px]">
-                        {(acceptanceViewMode === 'supervisores'
-                          ? supervisorAcceptanceData
-                          : bairroAcceptanceData.slice(0, 8)
-                        ).slice(0, 4).map((item) => (
+                        {supervisorAcceptanceData.slice(0, 4).map((item) => (
                           <div key={item.name} className="bg-white p-2 rounded border border-slate-200">
                             <div className="font-semibold text-slate-800 truncate" title={item.name}>
                               {item.name}
@@ -3224,7 +3190,7 @@ export const AdminView: React.FC = () => {
                         <th className="py-3 px-4">Data</th>
                         <th className="py-3 px-4">Supervisor</th>
                         <th className="py-3 px-4">Município / Comuna</th>
-                        <th className="py-3 px-4">Bairros</th>
+                        <th className="py-3 px-4 text-center">Nº Fichas</th>
                         <th className="py-3 px-4">Total Pessoas</th>
                         <th className="py-3 px-4">Status</th>
                         <th className="py-3 px-4 text-right">Ação</th>
@@ -3232,7 +3198,6 @@ export const AdminView: React.FC = () => {
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {submissoes.slice(0, 5).map((sub) => {
-                        const bairrosText = sub.fichas.map((f) => f.bairro).join(', ');
                         const comunasText = Array.from(new Set(sub.fichas.map((f) => f.comuna))).join(', ');
                         return (
                           <tr key={sub.id} className="hover:bg-slate-50 transition">
@@ -3245,18 +3210,10 @@ export const AdminView: React.FC = () => {
                             <td className="py-3 px-4 text-slate-600 text-xs">
                               {sub.municipio} / <span className="font-medium text-slate-800">{comunasText || 'Sede'}</span>
                             </td>
-                            <td className="py-3 px-4 text-slate-700 text-xs max-w-xs">
-                              <div className="flex flex-wrap gap-1">
-                                {sub.fichas.map((f, i) => (
-                                  <span
-                                    key={i}
-                                    className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded text-[11px] font-medium border border-slate-200"
-                                    title={`Bairro: ${f.bairro} (${f.comuna})`}
-                                  >
-                                    {f.bairro}
-                                  </span>
-                                ))}
-                              </div>
+                            <td className="py-3 px-4 text-center font-bold text-slate-800 text-xs font-mono">
+                              <span className="bg-blue-50 text-[#1a53db] border border-blue-200 px-2.5 py-0.5 rounded-full">
+                                {sub.fichas ? sub.fichas.length : 1} {sub.fichas?.length === 1 ? 'ficha' : 'fichas'}
+                              </span>
                             </td>
                             <td className="py-3 px-4 font-bold text-[#2667ff]">
                               {sub.totalPessoas.toLocaleString('pt-PT')}
@@ -4014,7 +3971,6 @@ export const AdminView: React.FC = () => {
                             <th className="py-3 px-3">Supervisor</th>
                             <th className="py-3 px-3">Coordenação</th>
                             <th className="py-3 px-3 text-center">Nº Fichas</th>
-                            <th className="py-3 px-3">Bairros Visitados</th>
                             <th className="py-3 px-3 text-center">Pessoas (Sim)</th>
                             <th className="py-3 px-3 text-right">Ação</th>
                           </tr>
@@ -4059,22 +4015,9 @@ export const AdminView: React.FC = () => {
                                 </td>
 
                                 <td className="py-3 px-3 text-center font-mono font-bold text-emerald-700">
-                                  <span className="bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
+                                  <span className="bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
                                     {sub.fichas ? sub.fichas.length : 1}
                                   </span>
-                                </td>
-
-                                <td className="py-3 px-3">
-                                  <div className="flex flex-wrap gap-1 max-w-[280px]">
-                                    {sub.fichas?.map((f, i) => (
-                                      <span
-                                        key={i}
-                                        className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded text-[10px] font-medium border border-slate-200"
-                                      >
-                                        {f.bairro || 'Sede'}
-                                      </span>
-                                    ))}
-                                  </div>
                                 </td>
 
                                 <td className="py-3 px-3 text-center font-bold text-[#1a53db]">
@@ -4342,24 +4285,6 @@ export const AdminView: React.FC = () => {
                               {coord.descricao}
                             </p>
                           )}
-
-                          {/* Bairros / Aldeias Abrangidos (Tags Organizadas sem Cortar Informação) */}
-                          <div className="mt-3 pt-3 border-t border-slate-100">
-                            <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1">
-                              <MapPin className="w-3 h-3 text-purple-500" />
-                              <span>Bairros / Setores Cobertos:</span>
-                            </div>
-                            <div className="flex flex-wrap gap-1.5">
-                              {(coord.bairros && coord.bairros.length > 0 ? coord.bairros : ['Centro', 'Sede']).map((b, i) => (
-                                <span
-                                  key={i}
-                                  className="bg-purple-50 text-purple-900 border border-purple-200 px-2 py-0.5 rounded-md text-[11px] font-medium"
-                                >
-                                  {b}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
 
                           {/* Meta & Progresso da Coordenação */}
                           <div className="mt-3.5 p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2">
@@ -5623,7 +5548,6 @@ export const AdminView: React.FC = () => {
                             <th className="py-3 px-4">Data / Dia</th>
                             <th className="py-3 px-4">Supervisor</th>
                             <th className="py-3 px-3">Comuna</th>
-                            <th className="py-3 px-4">Bairros Visitados</th>
                             <th className="py-3 px-3 text-center">Fichas</th>
                             <th className="py-3 px-3 text-center">Locais</th>
                             <th className="py-3 px-3 text-center font-bold text-[#2667ff]">Sim (Pessoas)</th>
@@ -5635,7 +5559,7 @@ export const AdminView: React.FC = () => {
                         <tbody className="divide-y divide-slate-100">
                           {filteredSubmissoes.length === 0 ? (
                             <tr>
-                              <td colSpan={10} className="py-8 text-center text-slate-400">
+                              <td colSpan={8} className="py-8 text-center text-slate-400">
                                 Nenhuma ficha encontrada com os filtros selecionados.
                               </td>
                             </tr>
@@ -5654,20 +5578,10 @@ export const AdminView: React.FC = () => {
                                   <td className="py-3 px-3 text-slate-600">
                                     {comunas || 'Sede'}
                                   </td>
-                                  <td className="py-3 px-4 max-w-xs">
-                                    <div className="flex flex-wrap gap-1">
-                                      {sub.fichas.map((f, i) => (
-                                        <span
-                                          key={i}
-                                          className="bg-slate-100 text-slate-800 px-1.5 py-0.5 rounded text-[10px] font-medium border border-slate-200"
-                                        >
-                                          {f.bairro}
-                                        </span>
-                                      ))}
-                                    </div>
-                                  </td>
                                   <td className="py-3 px-3 text-center font-bold font-mono text-slate-800">
-                                    {sub.fichas.length}
+                                    <span className="bg-blue-50 text-[#1a53db] border border-blue-200 px-2 py-0.5 rounded-full">
+                                      {sub.fichas.length}
+                                    </span>
                                   </td>
                                   <td className="py-3 px-3 text-center font-bold text-slate-700">
                                     {sub.totalLocais}

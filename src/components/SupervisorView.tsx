@@ -38,9 +38,58 @@ const getTodayString = () => {
 };
 
 export const SupervisorView: React.FC = () => {
-  const { userSession, supervisores, submissoes, addSubmissao, setActiveScreen } = useApp();
+  const { userSession, supervisores, submissoes, coordenacoes, addSubmissao, setActiveScreen } = useApp();
 
   const isSupervisorSession = userSession?.tipo === 'supervisor';
+  const [customBairroFichas, setCustomBairroFichas] = useState<Record<number, boolean>>({});
+
+  // Lista de todos os bairros registados no sistema para seleção direta
+  const todosBairrosCadastrados = useMemo(() => {
+    const bairrosSet = new Set<string>();
+
+    // 1. Extrair de todas as coordenações
+    (coordenacoes || []).forEach((c) => {
+      (c.bairros || []).forEach((b) => {
+        if (b && b.trim()) bairrosSet.add(b.trim());
+      });
+    });
+
+    // 2. Bairros oficiais do município do Sumbe
+    const listaOficialSumbe = [
+      'Aeroporto',
+      'Amboiva',
+      'Baixo Cubal',
+      'Bairro Novo',
+      'Bela Vista',
+      'Bumba',
+      'Cafula',
+      'Calunga',
+      'Cariango',
+      'Centro',
+      'Chingo',
+      'Comércio',
+      'E15',
+      'Gangula',
+      'Kikombo',
+      'Litoral',
+      'Mercado Central',
+      'Paz',
+      'Pedra 1',
+      'Pedreira',
+      'Pescadores',
+      'Plateau',
+      'Pomba',
+      'Porto',
+      'Quicombo Rural',
+      'Rocha',
+      'Salinas',
+      'Valódia',
+      'Zona Alta',
+    ];
+    listaOficialSumbe.forEach((b) => bairrosSet.add(b));
+
+    return Array.from(bairrosSet).sort((a, b) => a.localeCompare(b, 'pt-PT'));
+  }, [coordenacoes]);
 
   // Se Admin estiver a preencher, permitir selecionar o supervisor
   const [selectedAdminSupId, setSelectedAdminSupId] = useState<string>(
@@ -58,6 +107,18 @@ export const SupervisorView: React.FC = () => {
     }
     return supervisores.find((s) => s.id === selectedAdminSupId) || supervisores[0];
   }, [isSupervisorSession, userSession, supervisores, selectedAdminSupId]);
+
+  // Bairros específicos da coordenação do supervisor ativo
+  const bairrosDaMinhaCoordenacao = useMemo(() => {
+    if (!activeSupervisor) return [];
+    const coord = (coordenacoes || []).find(
+      (c) =>
+        c.id === activeSupervisor.coordenacaoId ||
+        (activeSupervisor.coordenacao && c.nome.toLowerCase().trim() === activeSupervisor.coordenacao.toLowerCase().trim()) ||
+        (c.supervisorIds && c.supervisorIds.includes(activeSupervisor.id))
+    );
+    return (coord?.bairros || []).filter((b) => Boolean(b && b.trim()));
+  }, [activeSupervisor, coordenacoes]);
 
   // Total de fichas que este supervisor já enviou no decorrer de toda a atividade
   const fichasEnviadasAcumuladas = useMemo(() => {
@@ -380,88 +441,94 @@ export const SupervisorView: React.FC = () => {
 
   return (
     <div id="supervisor-view" className="py-4 sm:py-6 px-3 sm:px-4 md:px-6 relative min-h-screen">
-      {/* Contador Flutuante de Fichas */}
+      {/* Contador Flutuante de Fichas (Posicionado sem tapar textos no telemóvel) */}
       <div id="ficha-counter" title="Número de fichas neste lote atual">
         <span>📋</span> Fichas no lote: <span id="counter-value">{fichas.length}</span>
       </div>
 
       {/* PAINEL SUPERIOR EM DESTAQUE: QUANTAS FICHAS JÁ ENVIOU NO DECORRER DA ATIVIDADE */}
       <div className="max-w-[900px] mx-auto mb-4">
-        <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-[#1a53db] text-white p-4 sm:p-5 rounded-2xl shadow-md border border-blue-400/20">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-3.5">
-              <div className="w-12 h-12 rounded-xl bg-white/10 backdrop-blur-sm border border-white/20 flex items-center justify-center text-2xl shadow-inner shrink-0">
+        <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-[#1a53db] text-white p-3.5 sm:p-5 rounded-2xl shadow-md border border-blue-400/20">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3.5 sm:gap-4">
+            {/* Bloco de Informações do Supervisor e Fichas */}
+            <div className="flex items-start sm:items-center gap-3 sm:gap-3.5">
+              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-white/10 backdrop-blur-sm border border-white/20 flex items-center justify-center text-xl sm:text-2xl shadow-inner shrink-0 mt-0.5 sm:mt-0">
                 📋
               </div>
-              <div>
-                <div className="text-[11px] uppercase tracking-wider text-blue-200 font-extrabold flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                  <span>Fichas Enviadas na Atividade</span>
+              <div className="min-w-0 flex-1">
+                <div className="text-[10px] sm:text-[11px] uppercase tracking-wider text-blue-200 font-extrabold flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0"></span>
+                  <span className="truncate">Fichas Enviadas na Atividade</span>
                 </div>
-                <div className="text-2xl sm:text-3xl font-black text-white flex items-baseline gap-2 mt-0.5">
+                <div className="text-xl sm:text-3xl font-black text-white flex flex-wrap items-baseline gap-1.5 sm:gap-2 mt-0.5 leading-tight">
                   <span>{fichasEnviadasAcumuladas}</span>
-                  <span className="text-sm font-semibold text-blue-100">
+                  <span className="text-xs sm:text-sm font-semibold text-blue-100">
                     {fichasEnviadasAcumuladas === 1 ? 'ficha enviada' : 'fichas enviadas'} no decorrer da atividade
                   </span>
                 </div>
-                <p className="text-xs text-blue-100/80 mt-1">
+                <p className="text-[11px] sm:text-xs text-blue-100/85 mt-1 leading-snug">
                   Supervisor: <strong className="text-white">{activeSupervisor?.nome}</strong> ({activeSupervisor?.codigo}) &bull; Comuna: <strong className="text-white">{activeSupervisor?.comuna || 'Sede'}</strong>
                   {activeSupervisor?.coordenacao && (
-                    <span> &bull; Coordenação: <strong className="text-white">{activeSupervisor.coordenacao}</strong></span>
+                    <span className="block xs:inline"> &bull; Coordenação: <strong className="text-white">{activeSupervisor.coordenacao}</strong></span>
                   )}
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-3 self-start sm:self-center">
-              <div className="bg-white/10 backdrop-blur-md px-3.5 py-2 rounded-xl border border-white/15 text-center">
-                <div className="text-[10px] uppercase font-bold text-blue-200">Meta Real Atribuída</div>
-                <div className="text-base font-extrabold text-white">
-                  {metaFichasSupervisor} fichas
+            {/* Meta e Ações Responsivas */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 w-full lg:w-auto shrink-0">
+              <div className="bg-white/10 backdrop-blur-md px-3 sm:px-3.5 py-2 rounded-xl border border-white/15 flex sm:flex-col justify-between sm:justify-center items-center sm:text-center">
+                <div>
+                  <div className="text-[9px] sm:text-[10px] uppercase font-bold text-blue-200">Meta Atribuída</div>
+                  <div className="text-sm sm:text-base font-extrabold text-white flex items-center gap-1.5 sm:block">
+                    <span>{metaFichasSupervisor} fichas</span>
+                    <span className="text-[10px] text-blue-200/90 font-medium sm:block">
+                      ({fichasDiariasSupervisor}/dia &bull; {diasCampanhaSupervisor}d)
+                    </span>
+                  </div>
                 </div>
-                <div className="text-[10px] text-blue-200/90 font-medium">
-                  {fichasDiariasSupervisor}/dia &bull; {diasCampanhaSupervisor} dias
-                </div>
-                <div className="text-[10px] text-emerald-300 font-bold mt-0.5">
+                <div className="text-[10px] sm:text-[11px] text-emerald-300 font-extrabold bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-400/30 sm:mt-0.5">
                   {metaFichasSupervisor > 0 ? ((fichasEnviadasAcumuladas / metaFichasSupervisor) * 100).toFixed(0) : 0}% da meta
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setActiveScreen('historico')}
-                className="bg-amber-400 hover:bg-amber-300 text-slate-900 font-extrabold px-3.5 py-2.5 rounded-xl text-xs transition cursor-pointer shadow-sm flex items-center gap-1.5 shrink-0"
-                title="Corrigir ou editar fichas lançadas anteriormente"
-              >
-                <Edit3 className="w-3.5 h-3.5 text-slate-900" />
-                <span>Editar / Corrigir Fichas</span>
-              </button>
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
+                <button
+                  type="button"
+                  onClick={() => setActiveScreen('historico')}
+                  className="bg-amber-400 hover:bg-amber-300 text-slate-900 font-extrabold px-2.5 sm:px-3.5 py-2 sm:py-2.5 rounded-xl text-xs transition cursor-pointer shadow-xs flex items-center justify-center gap-1.5 w-full sm:w-auto shrink-0"
+                  title="Corrigir ou editar fichas lançadas anteriormente"
+                >
+                  <Edit3 className="w-3.5 h-3.5 text-slate-900 shrink-0" />
+                  <span className="truncate">Editar Fichas</span>
+                </button>
 
-              <button
-                type="button"
-                onClick={() => setActiveScreen('historico')}
-                className="bg-white text-[#1a53db] hover:bg-blue-50 font-bold px-3.5 py-2.5 rounded-xl text-xs transition cursor-pointer shadow-sm flex items-center gap-1.5 shrink-0"
-                title="Consultar fichas já enviadas"
-              >
-                <span>Ver Histórico</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveScreen('historico')}
+                  className="bg-white text-[#1a53db] hover:bg-blue-50 font-bold px-2.5 sm:px-3.5 py-2 sm:py-2.5 rounded-xl text-xs transition cursor-pointer shadow-xs flex items-center justify-center gap-1.5 w-full sm:w-auto shrink-0"
+                  title="Consultar fichas já enviadas"
+                >
+                  <span className="truncate">Ver Histórico</span>
+                  <ArrowRight className="w-3.5 h-3.5 shrink-0" />
+                </button>
+              </div>
             </div>
           </div>
         </div>
 
         {fichasEnviadasAcumuladas > 0 && (
-          <div className="mt-3 bg-amber-50/90 border border-amber-200/90 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-900 shadow-2xs">
+          <div className="mt-2.5 sm:mt-3 bg-amber-50/90 border border-amber-200/90 rounded-xl p-2.5 sm:p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 text-xs text-amber-900 shadow-2xs">
             <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-amber-600 shrink-0" />
-              <span>
+              <span className="text-[11px] sm:text-xs leading-snug">
                 <strong>Lançou dados com erro?</strong> Pode editar e retificar qualquer ficha já enviada a qualquer momento.
               </span>
             </div>
             <button
               type="button"
               onClick={() => setActiveScreen('historico')}
-              className="bg-amber-500 hover:bg-amber-600 text-white font-extrabold px-3 py-1.5 rounded-lg text-xs shrink-0 cursor-pointer transition shadow-2xs flex items-center justify-center gap-1.5"
+              className="bg-amber-500 hover:bg-amber-600 text-white font-extrabold px-3 py-1.5 rounded-lg text-xs shrink-0 cursor-pointer transition shadow-2xs flex items-center justify-center gap-1.5 w-full sm:w-auto"
             >
               <Edit3 className="w-3.5 h-3.5" />
               <span>Corrigir Lançamento Anterior</span>
@@ -470,11 +537,11 @@ export const SupervisorView: React.FC = () => {
         )}
 
         {draftNotice && (
-          <div className="mt-3 bg-emerald-50 border border-emerald-300 text-emerald-950 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-2xs">
+          <div className="mt-2.5 sm:mt-3 bg-emerald-50 border border-emerald-300 text-emerald-950 rounded-xl p-2.5 sm:p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 text-xs shadow-2xs">
             <div className="flex items-center gap-2">
               <span className="text-base">💾</span>
-              <span>
-                <strong>Rascunho recuperado:</strong> Os dados que estava a preencher foram restaurados automaticamente para não perder o trabalho.
+              <span className="text-[11px] sm:text-xs leading-snug">
+                <strong>Rascunho recuperado:</strong> Os dados que estava a preencher foram restaurados automaticamente.
               </span>
             </div>
             <button
@@ -494,8 +561,8 @@ export const SupervisorView: React.FC = () => {
           MS<span>-sumbe</span>
         </div>
         <div className="user-profile-badge" title="Supervisor com sessão iniciada">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
-          Supervisor: {activeSupervisor ? activeSupervisor.nome : 'Não identificado'}
+          <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block shrink-0"></span>
+          <span className="truncate">Supervisor: {activeSupervisor ? activeSupervisor.nome : 'Não identificado'}</span>
         </div>
       </div>
 
@@ -668,25 +735,113 @@ export const SupervisorView: React.FC = () => {
                         />
                       </div>
 
-                      {/* Bairro / Aldeia */}
+                      {/* Bairro / Aldeia - Seleção Inteligente de Bairros Cadastrados */}
                       <div className="form-group full-width">
-                        <label>
-                          <span className="required">*</span> Bairro/Aldeia
-                        </label>
-                        <input
-                          type="text"
-                          name="bairro[]"
-                          value={ficha.bairro}
-                          onChange={(e) => handleInputChange(index, 'bairro', e.target.value)}
-                          placeholder="Digite o bairro ou aldeia visitada"
-                          required
-                        />
-                        {activeSupervisor?.coordenacao && (
-                          <div className="mt-1 text-xs text-slate-500">
-                            <span>Coordenação: </span>
-                            <span className="text-[#1a53db] font-medium">
-                              {activeSupervisor.coordenacao}
-                            </span>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="font-bold text-slate-800 text-xs sm:text-sm">
+                            <span className="required">*</span> Bairro / Aldeia
+                          </label>
+                          <span className="text-[10px] sm:text-[11px] font-semibold text-[#1a53db] bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
+                            {todosBairrosCadastrados.length} Bairros no Sistema
+                          </span>
+                        </div>
+
+                        {customBairroFichas[index] ? (
+                          <div className="space-y-1.5">
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                name="bairro[]"
+                                value={ficha.bairro}
+                                onChange={(e) => handleInputChange(index, 'bairro', e.target.value)}
+                                placeholder="Escreva o nome do novo bairro ou aldeia..."
+                                required
+                                autoFocus
+                                className="flex-1 text-xs sm:text-sm font-semibold"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setCustomBairroFichas((prev) => ({ ...prev, [index]: false }));
+                                  if (!ficha.bairro) {
+                                    handleInputChange(index, 'bairro', bairrosDaMinhaCoordenacao[0] || todosBairrosCadastrados[0] || '');
+                                  }
+                                }}
+                                className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-lg transition cursor-pointer border border-slate-300 shrink-0"
+                              >
+                                Ver Lista
+                              </button>
+                            </div>
+                            <p className="text-[11px] text-slate-500">
+                              A escrever bairro personalizado. Para escolher da lista existente, clique em &quot;Ver Lista&quot;.
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            <div className="relative">
+                              <select
+                                name="bairro[]"
+                                value={ficha.bairro}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  if (val === '__outro__') {
+                                    setCustomBairroFichas((prev) => ({ ...prev, [index]: true }));
+                                    handleInputChange(index, 'bairro', '');
+                                  } else {
+                                    handleInputChange(index, 'bairro', val);
+                                  }
+                                }}
+                                required
+                                className="w-full font-bold text-slate-800 bg-white border border-slate-300 rounded-lg p-2.5 sm:p-3 text-xs sm:text-sm focus:border-[#2667ff] focus:ring-2 focus:ring-blue-100 transition cursor-pointer"
+                              >
+                                <option value="">-- Clique aqui para escolher o Bairro --</option>
+                                {bairrosDaMinhaCoordenacao.length > 0 && (
+                                  <optgroup label={`📍 Bairros da sua Coordenação (${activeSupervisor?.coordenacao || 'Sua Área'})`}>
+                                    {bairrosDaMinhaCoordenacao.map((b) => (
+                                      <option key={`my-${b}`} value={b}>
+                                        ★ {b}
+                                      </option>
+                                    ))}
+                                  </optgroup>
+                                )}
+                                <optgroup label="📋 Todos os Bairros Cadastrados no Sumbe">
+                                  {todosBairrosCadastrados.map((b) => (
+                                    <option key={`all-${b}`} value={b}>
+                                      {b}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                                <option value="__outro__">✍️ Outro bairro (escrever manualmente)...</option>
+                              </select>
+                            </div>
+
+                            {/* Atalhos rápidos de 1 toque para os bairros da coordenação */}
+                            {bairrosDaMinhaCoordenacao.length > 0 && (
+                              <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                                <span className="text-[11px] text-slate-500 font-medium">Toque rápido:</span>
+                                {bairrosDaMinhaCoordenacao.map((b) => (
+                                  <button
+                                    key={b}
+                                    type="button"
+                                    onClick={() => handleInputChange(index, 'bairro', b)}
+                                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer border ${
+                                      ficha.bairro === b
+                                        ? 'bg-[#2667ff] text-white border-[#2667ff] shadow-xs'
+                                        : 'bg-slate-100 text-slate-700 hover:bg-blue-50 hover:text-blue-700 border-slate-200'
+                                    }`}
+                                  >
+                                    {b}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+
+                            {activeSupervisor?.coordenacao && (
+                              <div className="text-[11px] text-slate-500">
+                                <span>Coordenação do Supervisor: </span>
+                                <strong className="text-slate-800">{activeSupervisor.coordenacao}</strong>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>

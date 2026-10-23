@@ -48,7 +48,26 @@ interface EditableFichaState {
 }
 
 export const SupervisorHistoryView: React.FC = () => {
-  const { userSession, submissoes, updateSubmissao, deleteSubmissao, setActiveScreen } = useApp();
+  const { userSession, submissoes, coordenacoes, updateSubmissao, deleteSubmissao, setActiveScreen } = useApp();
+
+  // Lista de todos os bairros registados no sistema
+  const todosBairrosCadastrados = useMemo(() => {
+    const bairrosSet = new Set<string>();
+    (coordenacoes || []).forEach((c) => {
+      (c.bairros || []).forEach((b) => {
+        if (b && b.trim()) bairrosSet.add(b.trim());
+      });
+    });
+    const listaOficialSumbe = [
+      'Aeroporto', 'Amboiva', 'Baixo Cubal', 'Bairro Novo', 'Bela Vista', 'Bumba',
+      'Cafula', 'Calunga', 'Cariango', 'Centro', 'Chingo', 'Comércio', 'E15',
+      'Gangula', 'Kikombo', 'Litoral', 'Mercado Central', 'Paz', 'Pedra 1',
+      'Pedreira', 'Pescadores', 'Plateau', 'Pomba', 'Porto', 'Quicombo Rural',
+      'Rocha', 'Salinas', 'Valódia', 'Zona Alta',
+    ];
+    listaOficialSumbe.forEach((b) => bairrosSet.add(b));
+    return Array.from(bairrosSet).sort((a, b) => a.localeCompare(b, 'pt-PT'));
+  }, [coordenacoes]);
 
   // Estados de modais
   const [selectedSub, setSelectedSub] = useState<Submissao | null>(null);
@@ -311,33 +330,33 @@ export const SupervisorHistoryView: React.FC = () => {
   };
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-8">
+    <div className="max-w-5xl mx-auto px-3 sm:px-4 py-4 sm:py-8">
       {/* Cabeçalho */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 mb-4 sm:mb-6">
         <div>
           <button
             onClick={() => setActiveScreen('formulario')}
-            className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#2667ff] hover:text-[#1a53db] mb-2 transition cursor-pointer"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#2667ff] hover:text-[#1a53db] mb-1.5 transition cursor-pointer"
           >
             <ArrowLeft className="w-4 h-4" />
             <span>Voltar ao Formulário</span>
           </button>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-slate-900">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-xl sm:text-2xl font-bold text-slate-900 leading-tight">
               Minhas Fichas Enviadas
             </h1>
-            <span className="bg-blue-100 text-[#1a53db] text-[11px] font-extrabold px-2.5 py-0.5 rounded-full">
+            <span className="bg-blue-100 text-[#1a53db] text-[10px] sm:text-[11px] font-extrabold px-2 sm:px-2.5 py-0.5 rounded-full">
               Edição Habilitada
             </span>
           </div>
-          <p className="text-xs text-slate-500 mt-1">
+          <p className="text-[11px] sm:text-xs text-slate-500 mt-1 leading-snug">
             Histórico das coletas enviadas por {userSession?.nome}. Se cometeu algum erro, clique em <strong>Editar Fichas</strong> para retificar.
           </p>
         </div>
 
         <button
           onClick={() => setActiveScreen('formulario')}
-          className="bg-[#2667ff] hover:bg-[#1a53db] text-white font-bold text-xs sm:text-sm px-4 py-2.5 rounded-lg flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
+          className="bg-[#2667ff] hover:bg-[#1a53db] text-white font-bold text-xs sm:text-sm px-4 py-2 sm:py-2.5 rounded-lg flex items-center justify-center gap-2 shadow-xs transition cursor-pointer w-full sm:w-auto shrink-0"
         >
           <Plus className="w-4 h-4" />
           <span>Preencher Nova Ficha</span>
@@ -345,31 +364,31 @@ export const SupervisorHistoryView: React.FC = () => {
       </div>
 
       {/* Alerta de facilidade de correção */}
-      <div className="bg-amber-50/80 border border-amber-200/90 rounded-xl p-3.5 mb-6 flex items-start gap-3 text-amber-900 text-xs">
+      <div className="bg-amber-50/80 border border-amber-200/90 rounded-xl p-3 sm:p-3.5 mb-4 sm:mb-6 flex items-start gap-2.5 sm:gap-3 text-amber-900 text-xs">
         <Sparkles className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-        <div className="leading-relaxed">
+        <div className="leading-relaxed text-[11px] sm:text-xs">
           <strong>Lançou dados com erro?</strong> Agora pode corrigir qualquer ficha enviada a qualquer momento. Clique em <span className="font-bold underline decoration-amber-500">Editar Fichas</span> na remessa desejada para corrigir números, pessoas, bairros ou datas.
         </div>
       </div>
 
       {/* Resumo Rápido */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs">
-          <div className="text-xs font-semibold text-slate-500 uppercase">Total de Envios</div>
-          <div className="text-2xl font-black text-slate-900 mt-1">{mySubmissions.length}</div>
-          <div className="text-[11px] text-slate-400 mt-1">Registos gravados com sucesso</div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-6 sm:mb-8">
+        <div className="bg-white p-3.5 sm:p-5 rounded-xl border border-slate-200 shadow-xs">
+          <div className="text-[11px] sm:text-xs font-semibold text-slate-500 uppercase">Total de Envios</div>
+          <div className="text-xl sm:text-2xl font-black text-slate-900 mt-0.5 sm:mt-1">{mySubmissions.length}</div>
+          <div className="text-[10px] sm:text-[11px] text-slate-400 mt-0.5 sm:mt-1">Registos gravados com sucesso</div>
         </div>
 
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs">
-          <div className="text-xs font-semibold text-slate-500 uppercase">Fichas / Bairros</div>
-          <div className="text-2xl font-black text-[#2667ff] mt-1">{totalFichasMinhas}</div>
-          <div className="text-[11px] text-slate-400 mt-1">Bairros e áreas cobertas</div>
+        <div className="bg-white p-3.5 sm:p-5 rounded-xl border border-slate-200 shadow-xs">
+          <div className="text-[11px] sm:text-xs font-semibold text-slate-500 uppercase">Fichas / Bairros</div>
+          <div className="text-xl sm:text-2xl font-black text-[#2667ff] mt-0.5 sm:mt-1">{totalFichasMinhas}</div>
+          <div className="text-[10px] sm:text-[11px] text-slate-400 mt-0.5 sm:mt-1">Bairros e áreas cobertas</div>
         </div>
 
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs">
-          <div className="text-xs font-semibold text-slate-500 uppercase">Pessoas Mobilizadas</div>
-          <div className="text-2xl font-black text-emerald-600 mt-1">{totalPessoasMinhas.toLocaleString('pt-PT')}</div>
-          <div className="text-[11px] text-slate-400 mt-1">Alcançadas nas suas atividades</div>
+        <div className="bg-white p-3.5 sm:p-5 rounded-xl border border-slate-200 shadow-xs">
+          <div className="text-[11px] sm:text-xs font-semibold text-slate-500 uppercase">Pessoas Mobilizadas</div>
+          <div className="text-xl sm:text-2xl font-black text-emerald-600 mt-0.5 sm:mt-1">{totalPessoasMinhas.toLocaleString('pt-PT')}</div>
+          <div className="text-[10px] sm:text-[11px] text-slate-400 mt-0.5 sm:mt-1">Alcançadas nas suas atividades</div>
         </div>
       </div>
 
@@ -567,17 +586,17 @@ export const SupervisorHistoryView: React.FC = () => {
 
               {/* Lista de Fichas */}
               <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-extrabold text-slate-900 text-sm flex items-center gap-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                  <h4 className="font-extrabold text-slate-900 text-sm flex flex-wrap items-center gap-1.5 sm:gap-2">
                     <span>Fichas nesta Remessa ({editFichas.length})</span>
-                    <span className="text-xs font-normal text-slate-500">
-                      (Zeros desnecessários foram removidos para facilitar a inserção)
+                    <span className="text-[11px] font-normal text-slate-500">
+                      (Zeros automáticos removidos para agilizar)
                     </span>
                   </h4>
                   <button
                     type="button"
                     onClick={handleAddFichaToEdit}
-                    className="text-xs font-bold text-[#1a53db] hover:text-[#1848c4] bg-blue-50 hover:bg-blue-100 border border-blue-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer"
+                    className="text-xs font-bold text-[#1a53db] hover:text-[#1848c4] bg-blue-50 hover:bg-blue-100 border border-blue-200 px-3 py-1.5 rounded-lg flex items-center justify-center gap-1.5 transition cursor-pointer w-full sm:w-auto shrink-0"
                   >
                     <Plus className="w-3.5 h-3.5" />
                     <span>Adicionar Outra Ficha</span>
@@ -631,14 +650,22 @@ export const SupervisorHistoryView: React.FC = () => {
                         <label className="block text-[11px] font-bold text-slate-700 mb-1">
                           Bairro / Aldeia <span className="text-[#2667ff]">*</span>
                         </label>
-                        <input
-                          type="text"
+                        <select
                           required
                           value={ficha.bairro}
                           onChange={(e) => handleEditFichaChange(fIdx, 'bairro', e.target.value)}
-                          placeholder="Digite o bairro ou aldeia visitada"
-                          className="w-full text-xs font-semibold py-1.5 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#2667ff] outline-none"
-                        />
+                          className="w-full text-xs font-bold py-1.5 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#2667ff] bg-white outline-none cursor-pointer"
+                        >
+                          <option value="">-- Selecione o Bairro Cadastrado --</option>
+                          {todosBairrosCadastrados.map((b) => (
+                            <option key={b} value={b}>
+                              {b}
+                            </option>
+                          ))}
+                          {ficha.bairro && !todosBairrosCadastrados.includes(ficha.bairro) && (
+                            <option value={ficha.bairro}>{ficha.bairro} (Personalizado)</option>
+                          )}
+                        </select>
                       </div>
                     </div>
 

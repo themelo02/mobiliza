@@ -66,29 +66,36 @@ body {
 
 /* Ficha counter */
 #ficha-counter {
-  position: fixed;
-  top: 52px;
-  right: 20px;
+  position: relative;
+  top: auto;
+  right: auto;
+  margin: 0 auto 12px auto;
+  width: fit-content;
+  max-width: 100%;
   background-color: var(--primary-color);
   color: var(--white);
-  padding: 8px 16px;
+  padding: 7px 16px;
   border-radius: 50px;
-  font-size: 13px;
-  font-weight: bold;
-  box-shadow: 0 4px 14px rgba(38, 103, 255, 0.35);
-  z-index: 1000;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 2px 10px rgba(38, 103, 255, 0.25);
+  z-index: 20;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
   transition: transform 0.2s;
 }
 
-@media (max-width: 640px) {
+@media (min-width: 1280px) {
   #ficha-counter {
-    top: 48px;
-    right: 12px;
-    padding: 6px 12px;
-    font-size: 11px;
+    position: fixed;
+    top: 54px;
+    right: 24px;
+    margin: 0;
+    font-size: 13px;
+    padding: 8px 18px;
+    box-shadow: 0 4px 14px rgba(38, 103, 255, 0.35);
   }
 }
 
@@ -102,15 +109,28 @@ body {
   justify-content: space-between;
   align-items: center;
   max-width: 900px;
-  margin: 0 auto 20px auto;
-  padding: 12px 10px;
+  margin: 0 auto 18px auto;
+  padding: 8px 6px;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .logo {
-  font-size: 28px;
+  font-size: 22px;
   font-weight: 800;
   color: var(--primary-color);
-  letter-spacing: -1px;
+  letter-spacing: -0.5px;
+}
+
+@media (min-width: 640px) {
+  .logo {
+    font-size: 28px;
+    letter-spacing: -1px;
+  }
+  .top-bar {
+    padding: 12px 10px;
+    margin-bottom: 20px;
+  }
 }
 
 .logo span {
@@ -121,14 +141,23 @@ body {
 .user-profile-badge {
   background: #e2e8f0;
   color: #1e293b;
-  padding: 6px 16px;
+  padding: 5px 12px;
   border-radius: 20px;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 600;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   border: 1px solid #cbd5e1;
+  max-width: 100%;
+}
+
+@media (min-width: 640px) {
+  .user-profile-badge {
+    padding: 6px 16px;
+    font-size: 13px;
+    gap: 8px;
+  }
 }
 
 /* Form container */
@@ -137,7 +166,7 @@ body {
   max-width: 900px;
   width: 100%;
   margin: 0 auto;
-  padding: 20px 14px;
+  padding: 16px 12px;
   border-radius: 12px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
   border: 1px solid #f1f5f9;
@@ -158,54 +187,99 @@ body {
 
 .form-header {
   text-align: center;
-  margin-bottom: 35px;
+  margin-bottom: 22px;
   border-bottom: 2px solid #f8fafc;
-  padding-bottom: 25px;
+  padding-bottom: 16px;
+}
+
+@media (min-width: 640px) {
+  .form-header {
+    margin-bottom: 35px;
+    padding-bottom: 25px;
+  }
 }
 
 .form-header h1 {
   color: var(--primary-color);
-  font-size: 28px;
+  font-size: 20px;
   font-weight: 800;
-  margin-bottom: 12px;
+  margin-bottom: 6px;
   letter-spacing: -0.5px;
+  line-height: 1.25;
+}
+
+@media (min-width: 640px) {
+  .form-header h1 {
+    font-size: 28px;
+    margin-bottom: 12px;
+  }
 }
 
 .header-info {
-  font-size: 14px;
+  font-size: 11px;
   font-weight: 700;
   color: #475569;
-  line-height: 1.6;
+  line-height: 1.45;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.3px;
+}
+
+@media (min-width: 640px) {
+  .header-info {
+    font-size: 14px;
+    line-height: 1.6;
+    letter-spacing: 0.5px;
+  }
 }
 
 .header-info .slogan {
   color: var(--primary-color);
-  font-size: 15px;
-  margin-top: 8px;
+  font-size: 12px;
+  margin-top: 5px;
   display: block;
   font-weight: 800;
 }
 
+@media (min-width: 640px) {
+  .header-info .slogan {
+    font-size: 15px;
+    margin-top: 8px;
+  }
+}
+
 /* Sections */
 .section {
-  margin-bottom: 28px;
+  margin-bottom: 24px;
+}
+
+@media (min-width: 640px) {
+  .section {
+    margin-bottom: 28px;
+  }
 }
 
 .section-title {
   color: var(--primary-color);
-  font-size: 17px;
+  font-size: 14px;
   font-weight: 700;
   display: flex;
   align-items: center;
   cursor: pointer;
-  margin-bottom: 18px;
+  margin-bottom: 14px;
   user-select: none;
   background: #eff4ff;
-  padding: 10px 14px;
+  padding: 8px 12px;
   border-radius: 6px;
   border-left: 4px solid var(--primary-color);
+  line-height: 1.35;
+}
+
+@media (min-width: 640px) {
+  .section-title {
+    font-size: 17px;
+    padding: 10px 14px;
+    margin-bottom: 18px;
+  }
 }
 
 .section-title::before {

@@ -102,6 +102,7 @@ export const AdminView: React.FC = () => {
     updateLeitor,
     toggleLeitorStatus,
     deleteLeitor,
+    updateSubmissao,
     updateSubmissaoStatus,
     deleteSubmissao,
     clearAllSubmissoes,
@@ -222,8 +223,107 @@ export const AdminView: React.FC = () => {
   const [adminCodeErrorMsg, setAdminCodeErrorMsg] = useState('');
   const [isUpdatingCode, setIsUpdatingCode] = useState(false);
 
-  // Submission Detail Modal
+  // Submission Detail Modal & Edit Modal by Admin
   const [selectedSubmission, setSelectedSubmission] = useState<Submissao | null>(null);
+  const [editingSubByAdmin, setEditingSubByAdmin] = useState<Submissao | null>(null);
+  const [editAdminData, setEditAdminData] = useState<string>('');
+  const [editAdminDia, setEditAdminDia] = useState<number>(1);
+  const [editAdminFichas, setEditAdminFichas] = useState<any[]>([]);
+  const [isSavingAdminEdit, setIsSavingAdminEdit] = useState<boolean>(false);
+  const [adminEditSuccessMsg, setAdminEditSuccessMsg] = useState<string>('');
+  const [adminEditErrorMsg, setAdminEditErrorMsg] = useState<string>('');
+
+  const handleStartAdminEditSub = (sub: Submissao) => {
+    setEditingSubByAdmin(sub);
+    setEditAdminData(sub.data || new Date().toISOString().split('T')[0]);
+    setEditAdminDia(sub.diaCampanha || 1);
+    setAdminEditSuccessMsg('');
+    setAdminEditErrorMsg('');
+    setEditAdminFichas(
+      (sub.fichas || []).map((f, idx) => ({
+        ...f,
+        numeroFicha: f.numeroFicha || idx + 1,
+        bairro: f.bairro || '',
+        comuna: f.comuna || 'Sede',
+      }))
+    );
+  };
+
+  const handleAdminFichaFieldChange = (idx: number, field: string, val: string) => {
+    setEditAdminFichas((prev) => {
+      const copy = [...prev];
+      const item = { ...copy[idx] };
+      if (field === 'bairro' || field === 'comuna') {
+        item[field] = val;
+      } else {
+        item[field] = val === '' ? '' : Math.max(0, parseInt(val) || 0);
+        // live recalculation of total_sim
+        const c_casa_p = Number(field === 'casa_pessoas' ? val : item.casa_pessoas) || 0;
+        const c_igrejas_p = Number(field === 'igrejas_pessoas' ? val : item.igrejas_pessoas) || 0;
+        const c_pracas_p = Number(field === 'pracas_pessoas' ? val : item.pracas_pessoas) || 0;
+        const c_paragem_p = Number(field === 'paragem_pessoas' ? val : item.paragem_pessoas) || 0;
+        const c_creches_p = Number(field === 'creches_pessoas' ? val : item.creches_pessoas) || 0;
+        const c_escolas_p = Number(field === 'escolas_pessoas' ? val : item.escolas_pessoas) || 0;
+        const c_agua_p = Number(field === 'agua_pessoas' ? val : item.agua_pessoas) || 0;
+        const c_outros_p = Number(field === 'outros_pessoas' ? val : item.outros_pessoas) || 0;
+        item.total_sim = c_casa_p + c_igrejas_p + c_pracas_p + c_paragem_p + c_creches_p + c_escolas_p + c_agua_p + c_outros_p;
+      }
+      copy[idx] = item;
+      return copy;
+    });
+  };
+
+  const handleSaveAdminSubEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingSubByAdmin) return;
+    setIsSavingAdminEdit(true);
+    setAdminEditErrorMsg('');
+    try {
+      const sanitized = editAdminFichas.map((f, idx) => ({
+        ...f,
+        numeroFicha: idx + 1,
+        bairro: (f.bairro || '').trim(),
+        comuna: f.comuna || 'Sede',
+        casa_locais: Number(f.casa_locais) || 0,
+        casa_pessoas: Number(f.casa_pessoas) || 0,
+        igrejas_locais: Number(f.igrejas_locais) || 0,
+        igrejas_pessoas: Number(f.igrejas_pessoas) || 0,
+        pracas_locais: Number(f.pracas_locais) || 0,
+        pracas_pessoas: Number(f.pracas_pessoas) || 0,
+        paragem_locais: Number(f.paragem_locais) || 0,
+        paragem_pessoas: Number(f.paragem_pessoas) || 0,
+        creches_locais: Number(f.creches_locais) || 0,
+        creches_pessoas: Number(f.creches_pessoas) || 0,
+        escolas_locais: Number(f.escolas_locais) || 0,
+        escolas_pessoas: Number(f.escolas_pessoas) || 0,
+        agua_locais: Number(f.agua_locais) || 0,
+        agua_pessoas: Number(f.agua_pessoas) || 0,
+        outros_locais: Number(f.outros_locais) || 0,
+        outros_pessoas: Number(f.outros_pessoas) || 0,
+        total_sim: Number(f.total_sim) || 0,
+        total_nao: Number(f.total_nao) || 0,
+      }));
+
+      await updateSubmissao(editingSubByAdmin.id, {
+        data: editAdminData,
+        diaCampanha: editAdminDia,
+        fichas: sanitized,
+      });
+
+      setAdminEditSuccessMsg('Submissão atualizada com sucesso!');
+      if (selectedSubmission?.id === editingSubByAdmin.id) {
+        setSelectedSubmission(null);
+      }
+      setTimeout(() => {
+        setEditingSubByAdmin(null);
+        setAdminEditSuccessMsg('');
+      }, 1000);
+    } catch (err) {
+      setAdminEditErrorMsg('Erro ao guardar as alterações.');
+    } finally {
+      setIsSavingAdminEdit(false);
+    }
+  };
 
   // Filters for reports
   const [filterSupervisor, setFilterSupervisor] = useState<string>('todos');
@@ -6803,13 +6903,382 @@ export const AdminView: React.FC = () => {
               <span className="text-xs text-slate-500">
                 ID da Submissão: <span className="font-mono">{selectedSubmission.id}</span>
               </span>
+              <div className="flex items-center gap-2">
+                {!isReadOnly && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const sub = selectedSubmission;
+                      setSelectedSubmission(null);
+                      handleStartAdminEditSub(sub);
+                    }}
+                    className="px-4 py-2 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-[#1a53db] font-bold text-xs rounded-lg flex items-center gap-1.5 cursor-pointer transition shadow-2xs"
+                  >
+                    <Edit3 className="w-3.5 h-3.5 text-[#2667ff]" />
+                    <span>Editar Fichas desta Remessa</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setSelectedSubmission(null)}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-semibold text-xs rounded-lg cursor-pointer"
+                >
+                  Fechar Detalhes
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* MODAL: ADMIN EDITAR FICHAS DA SUBMISSÃO */}
+      {/* ============================================================== */}
+      {editingSubByAdmin && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-[9999] overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full p-4 sm:p-6 text-slate-800 my-6 max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3 mb-4 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-blue-100 text-[#1a53db] flex items-center justify-center font-bold shrink-0">
+                  <Edit3 className="w-5 h-5 text-[#2667ff]" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-base sm:text-lg">
+                    Editar e Corrigir Fichas (Admin)
+                  </h3>
+                  <div className="text-xs text-slate-500">
+                    Supervisor: <strong className="text-slate-800">{editingSubByAdmin.supervisorNome}</strong> &bull; Remessa ID: <span className="font-mono">{editingSubByAdmin.id}</span>
+                  </div>
+                </div>
+              </div>
               <button
-                onClick={() => setSelectedSubmission(null)}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-semibold text-xs rounded-lg cursor-pointer"
+                type="button"
+                onClick={() => setEditingSubByAdmin(null)}
+                className="text-slate-400 hover:text-slate-600 text-2xl font-bold cursor-pointer"
               >
-                Fechar Detalhes
+                &times;
               </button>
             </div>
+
+            {adminEditSuccessMsg && (
+              <div className="mb-3 p-3 bg-emerald-50 border border-emerald-300 rounded-xl text-emerald-800 text-xs font-semibold flex items-center gap-2 shrink-0">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{adminEditSuccessMsg}</span>
+              </div>
+            )}
+            {adminEditErrorMsg && (
+              <div className="mb-3 p-3 bg-rose-50 border border-rose-300 rounded-xl text-rose-800 text-xs font-semibold flex items-center gap-2 shrink-0">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{adminEditErrorMsg}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveAdminSubEdit} className="overflow-y-auto flex-1 pr-1 space-y-4">
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Data da Atividade</label>
+                  <input
+                    type="date"
+                    required
+                    value={editAdminData}
+                    onChange={(e) => setEditAdminData(e.target.value)}
+                    className="w-full text-xs font-semibold py-1.5 px-3 border border-slate-300 rounded-lg bg-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Dia da Campanha</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="60"
+                    required
+                    value={editAdminDia}
+                    onChange={(e) => setEditAdminDia(Math.max(1, parseInt(e.target.value) || 1))}
+                    className="w-full text-xs font-bold py-1.5 px-3 border border-slate-300 rounded-lg bg-white"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <h4 className="font-bold text-slate-900 text-sm">Fichas nesta Remessa ({editAdminFichas.length})</h4>
+
+                {editAdminFichas.map((ficha, idx) => (
+                  <div key={ficha.id || idx} className="bg-white p-3.5 rounded-xl border border-slate-200 space-y-3">
+                    <div className="flex items-center justify-between border-b border-slate-200 pb-1.5">
+                      <span className="bg-[#2667ff] text-white font-extrabold text-xs px-2.5 py-0.5 rounded-full">
+                        Ficha {idx + 1}
+                      </span>
+                      <span className="text-xs font-bold text-slate-800">{ficha.bairro || 'Sem Bairro'}</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 mb-0.5">Comuna</label>
+                        <input
+                          type="text"
+                          required
+                          value={ficha.comuna}
+                          onChange={(e) => handleAdminFichaFieldChange(idx, 'comuna', e.target.value)}
+                          className="w-full text-xs py-1 px-2.5 border border-slate-300 rounded-lg"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 mb-0.5">Bairro / Aldeia</label>
+                        <input
+                          type="text"
+                          required
+                          value={ficha.bairro}
+                          onChange={(e) => handleAdminFichaFieldChange(idx, 'bairro', e.target.value)}
+                          className="w-full text-xs font-semibold py-1 px-2.5 border border-slate-300 rounded-lg"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                      {/* Casa */}
+                      <div className="bg-slate-50 p-2 rounded border border-slate-200">
+                        <span className="font-bold text-slate-800 block text-[10px] mb-1">1. Casa a casa</span>
+                        <div className="grid grid-cols-2 gap-1">
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={ficha.casa_locais === 0 ? '' : ficha.casa_locais}
+                            onChange={(e) => handleAdminFichaFieldChange(idx, 'casa_locais', e.target.value)}
+                            onFocus={(e) => e.target.select()}
+                            className="w-full text-center text-xs py-0.5 bg-white border border-slate-300 rounded"
+                            title="Locais"
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={ficha.casa_pessoas === 0 ? '' : ficha.casa_pessoas}
+                            onChange={(e) => handleAdminFichaFieldChange(idx, 'casa_pessoas', e.target.value)}
+                            onFocus={(e) => e.target.select()}
+                            className="w-full text-center text-xs py-0.5 bg-white border border-blue-300 text-blue-700 font-bold rounded"
+                            title="Pessoas"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Igrejas */}
+                      <div className="bg-slate-50 p-2 rounded border border-slate-200">
+                        <span className="font-bold text-slate-800 block text-[10px] mb-1">2. Igrejas</span>
+                        <div className="grid grid-cols-2 gap-1">
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={ficha.igrejas_locais === 0 ? '' : ficha.igrejas_locais}
+                            onChange={(e) => handleAdminFichaFieldChange(idx, 'igrejas_locais', e.target.value)}
+                            onFocus={(e) => e.target.select()}
+                            className="w-full text-center text-xs py-0.5 bg-white border border-slate-300 rounded"
+                            title="Locais"
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={ficha.igrejas_pessoas === 0 ? '' : ficha.igrejas_pessoas}
+                            onChange={(e) => handleAdminFichaFieldChange(idx, 'igrejas_pessoas', e.target.value)}
+                            onFocus={(e) => e.target.select()}
+                            className="w-full text-center text-xs py-0.5 bg-white border border-blue-300 text-blue-700 font-bold rounded"
+                            title="Pessoas"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Praças */}
+                      <div className="bg-slate-50 p-2 rounded border border-slate-200">
+                        <span className="font-bold text-slate-800 block text-[10px] mb-1">3. Praças</span>
+                        <div className="grid grid-cols-2 gap-1">
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={ficha.pracas_locais === 0 ? '' : ficha.pracas_locais}
+                            onChange={(e) => handleAdminFichaFieldChange(idx, 'pracas_locais', e.target.value)}
+                            onFocus={(e) => e.target.select()}
+                            className="w-full text-center text-xs py-0.5 bg-white border border-slate-300 rounded"
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={ficha.pracas_pessoas === 0 ? '' : ficha.pracas_pessoas}
+                            onChange={(e) => handleAdminFichaFieldChange(idx, 'pracas_pessoas', e.target.value)}
+                            onFocus={(e) => e.target.select()}
+                            className="w-full text-center text-xs py-0.5 bg-white border border-blue-300 text-blue-700 font-bold rounded"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Paragens */}
+                      <div className="bg-slate-50 p-2 rounded border border-slate-200">
+                        <span className="font-bold text-slate-800 block text-[10px] mb-1">4. Paragens</span>
+                        <div className="grid grid-cols-2 gap-1">
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={ficha.paragem_locais === 0 ? '' : ficha.paragem_locais}
+                            onChange={(e) => handleAdminFichaFieldChange(idx, 'paragem_locais', e.target.value)}
+                            onFocus={(e) => e.target.select()}
+                            className="w-full text-center text-xs py-0.5 bg-white border border-slate-300 rounded"
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={ficha.paragem_pessoas === 0 ? '' : ficha.paragem_pessoas}
+                            onChange={(e) => handleAdminFichaFieldChange(idx, 'paragem_pessoas', e.target.value)}
+                            onFocus={(e) => e.target.select()}
+                            className="w-full text-center text-xs py-0.5 bg-white border border-blue-300 text-blue-700 font-bold rounded"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Creches */}
+                      <div className="bg-slate-50 p-2 rounded border border-slate-200">
+                        <span className="font-bold text-slate-800 block text-[10px] mb-1">5. Creches</span>
+                        <div className="grid grid-cols-2 gap-1">
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={ficha.creches_locais === 0 ? '' : ficha.creches_locais}
+                            onChange={(e) => handleAdminFichaFieldChange(idx, 'creches_locais', e.target.value)}
+                            onFocus={(e) => e.target.select()}
+                            className="w-full text-center text-xs py-0.5 bg-white border border-slate-300 rounded"
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={ficha.creches_pessoas === 0 ? '' : ficha.creches_pessoas}
+                            onChange={(e) => handleAdminFichaFieldChange(idx, 'creches_pessoas', e.target.value)}
+                            onFocus={(e) => e.target.select()}
+                            className="w-full text-center text-xs py-0.5 bg-white border border-blue-300 text-blue-700 font-bold rounded"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Escolas */}
+                      <div className="bg-slate-50 p-2 rounded border border-slate-200">
+                        <span className="font-bold text-slate-800 block text-[10px] mb-1">6. Escolas</span>
+                        <div className="grid grid-cols-2 gap-1">
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={ficha.escolas_locais === 0 ? '' : ficha.escolas_locais}
+                            onChange={(e) => handleAdminFichaFieldChange(idx, 'escolas_locais', e.target.value)}
+                            onFocus={(e) => e.target.select()}
+                            className="w-full text-center text-xs py-0.5 bg-white border border-slate-300 rounded"
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={ficha.escolas_pessoas === 0 ? '' : ficha.escolas_pessoas}
+                            onChange={(e) => handleAdminFichaFieldChange(idx, 'escolas_pessoas', e.target.value)}
+                            onFocus={(e) => e.target.select()}
+                            className="w-full text-center text-xs py-0.5 bg-white border border-blue-300 text-blue-700 font-bold rounded"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Água */}
+                      <div className="bg-slate-50 p-2 rounded border border-slate-200">
+                        <span className="font-bold text-slate-800 block text-[10px] mb-1">7. Água</span>
+                        <div className="grid grid-cols-2 gap-1">
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={ficha.agua_locais === 0 ? '' : ficha.agua_locais}
+                            onChange={(e) => handleAdminFichaFieldChange(idx, 'agua_locais', e.target.value)}
+                            onFocus={(e) => e.target.select()}
+                            className="w-full text-center text-xs py-0.5 bg-white border border-slate-300 rounded"
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={ficha.agua_pessoas === 0 ? '' : ficha.agua_pessoas}
+                            onChange={(e) => handleAdminFichaFieldChange(idx, 'agua_pessoas', e.target.value)}
+                            onFocus={(e) => e.target.select()}
+                            className="w-full text-center text-xs py-0.5 bg-white border border-blue-300 text-blue-700 font-bold rounded"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Outros */}
+                      <div className="bg-slate-50 p-2 rounded border border-slate-200">
+                        <span className="font-bold text-slate-800 block text-[10px] mb-1">8. Outros</span>
+                        <div className="grid grid-cols-2 gap-1">
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={ficha.outros_locais === 0 ? '' : ficha.outros_locais}
+                            onChange={(e) => handleAdminFichaFieldChange(idx, 'outros_locais', e.target.value)}
+                            onFocus={(e) => e.target.select()}
+                            className="w-full text-center text-xs py-0.5 bg-white border border-slate-300 rounded"
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={ficha.outros_pessoas === 0 ? '' : ficha.outros_pessoas}
+                            onChange={(e) => handleAdminFichaFieldChange(idx, 'outros_pessoas', e.target.value)}
+                            onFocus={(e) => e.target.select()}
+                            className="w-full text-center text-xs py-0.5 bg-white border border-blue-300 text-blue-700 font-bold rounded"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between bg-blue-50/50 p-2 rounded border border-blue-200 text-xs">
+                      <div>
+                        <span className="text-slate-600 font-semibold">Total Sim: </span>
+                        <strong className="text-[#1a53db]">{ficha.total_sim} pessoas</strong>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-slate-600 font-semibold">Total Não:</span>
+                        <input
+                          type="number"
+                          min="0"
+                          placeholder="0"
+                          value={ficha.total_nao === 0 ? '' : ficha.total_nao}
+                          onChange={(e) => handleAdminFichaFieldChange(idx, 'total_nao', e.target.value)}
+                          onFocus={(e) => e.target.select()}
+                          className="w-16 text-center text-xs py-0.5 bg-white border border-slate-300 rounded"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-200 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setEditingSubByAdmin(null)}
+                  className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 text-xs font-semibold hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingAdminEdit}
+                  className="px-5 py-2 rounded-lg bg-[#2667ff] hover:bg-[#1a53db] disabled:opacity-50 text-white text-xs font-bold shadow-xs transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <span>{isSavingAdminEdit ? 'A Guardar...' : 'Salvar Alterações'}</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

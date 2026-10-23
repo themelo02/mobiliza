@@ -44,6 +44,7 @@ interface AppContextType {
   toggleLeitorStatus: (id: string) => Promise<void>;
   deleteLeitor: (id: string) => Promise<void>;
   addSubmissao: (sub: Omit<Submissao, 'id' | 'dataEnvio'>) => Promise<Submissao>;
+  updateSubmissao: (id: string, updatedData: Partial<Submissao>) => Promise<void>;
   updateSubmissaoStatus: (id: string, status: 'Validado' | 'Pendente' | 'Em Revisão') => Promise<void>;
   deleteSubmissao: (id: string) => Promise<void>;
   clearAllSubmissoes: () => Promise<void>;
@@ -756,6 +757,112 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return newSub;
   };
 
+  const updateSubmissao = async (
+    id: string,
+    updatedData: Partial<Submissao>
+  ): Promise<void> => {
+    // Recalcular métricas consolidadas se as fichas foram alteradas
+    let calculatedTotals: Partial<Submissao> = {};
+    if (updatedData.fichas) {
+      let totalPessoas = 0;
+      let totalLocais = 0;
+      let totalSim = 0;
+      let totalNao = 0;
+
+      const sanitizedFichas = updatedData.fichas.map((f, idx) => {
+        const c_casa_l = Number(f.casa_locais) || 0;
+        const c_casa_p = Number(f.casa_pessoas) || 0;
+        const c_igrejas_l = Number(f.igrejas_locais) || 0;
+        const c_igrejas_p = Number(f.igrejas_pessoas) || 0;
+        const c_pracas_l = Number(f.pracas_locais) || 0;
+        const c_pracas_p = Number(f.pracas_pessoas) || 0;
+        const c_paragem_l = Number(f.paragem_locais) || 0;
+        const c_paragem_p = Number(f.paragem_pessoas) || 0;
+        const c_creches_l = Number(f.creches_locais) || 0;
+        const c_creches_p = Number(f.creches_pessoas) || 0;
+        const c_escolas_l = Number(f.escolas_locais) || 0;
+        const c_escolas_p = Number(f.escolas_pessoas) || 0;
+        const c_agua_l = Number(f.agua_locais) || 0;
+        const c_agua_p = Number(f.agua_pessoas) || 0;
+        const c_outros_l = Number(f.outros_locais) || 0;
+        const c_outros_p = Number(f.outros_pessoas) || 0;
+
+        const totalSimFicha =
+          c_casa_p +
+          c_igrejas_p +
+          c_pracas_p +
+          c_paragem_p +
+          c_creches_p +
+          c_escolas_p +
+          c_agua_p +
+          c_outros_p;
+
+        const totalNaoFicha = Number(f.total_nao) || 0;
+
+        totalPessoas += totalSimFicha;
+        totalSim += totalSimFicha;
+        totalNao += totalNaoFicha;
+        totalLocais +=
+          c_casa_l +
+          c_igrejas_l +
+          c_pracas_l +
+          c_paragem_l +
+          c_creches_l +
+          c_escolas_l +
+          c_agua_l +
+          c_outros_l;
+
+        return {
+          ...f,
+          numeroFicha: f.numeroFicha || idx + 1,
+          casa_locais: c_casa_l,
+          casa_pessoas: c_casa_p,
+          igrejas_locais: c_igrejas_l,
+          igrejas_pessoas: c_igrejas_p,
+          pracas_locais: c_pracas_l,
+          pracas_pessoas: c_pracas_p,
+          paragem_locais: c_paragem_l,
+          paragem_pessoas: c_paragem_p,
+          creches_locais: c_creches_l,
+          creches_pessoas: c_creches_p,
+          escolas_locais: c_escolas_l,
+          escolas_pessoas: c_escolas_p,
+          agua_locais: c_agua_l,
+          agua_pessoas: c_agua_p,
+          outros_locais: c_outros_l,
+          outros_pessoas: c_outros_p,
+          total_sim: totalSimFicha,
+          total_nao: totalNaoFicha,
+        };
+      });
+
+      calculatedTotals = {
+        fichas: sanitizedFichas,
+        totalPessoas,
+        totalLocais,
+        totalSim,
+        totalNao,
+      };
+    }
+
+    const payload = {
+      ...updatedData,
+      ...calculatedTotals,
+    };
+
+    // Atualização otimista imediata no estado local
+    setSubmissoes((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, ...payload } : s))
+    );
+
+    // Persistência no Firestore
+    try {
+      await updateDoc(doc(db, 'submissoes', id), payload);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, `submissoes/${id}`);
+    }
+  };
+
   const updateSubmissaoStatus = async (
     id: string,
     status: 'Validado' | 'Pendente' | 'Em Revisão'
@@ -899,6 +1006,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         toggleLeitorStatus,
         deleteLeitor,
         addSubmissao,
+        updateSubmissao,
         updateSubmissaoStatus,
         deleteSubmissao,
         clearAllSubmissoes,

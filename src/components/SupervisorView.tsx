@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { FichaAtividade } from '../types';
-import { CheckCircle2, Plus, Minus, Send, AlertTriangle, ArrowRight, Printer, Sparkles, Building2, MapPin, Award, CheckCircle } from 'lucide-react';
+import { CheckCircle2, Plus, Minus, Send, AlertTriangle, ArrowRight, Printer, Sparkles, Building2, MapPin, Award, CheckCircle, Edit3 } from 'lucide-react';
 
 interface FichaFormState {
   id: string;
@@ -352,6 +352,16 @@ export const SupervisorView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setActiveScreen('historico')}
+                className="bg-amber-400 hover:bg-amber-300 text-slate-900 font-extrabold px-3.5 py-2.5 rounded-xl text-xs transition cursor-pointer shadow-sm flex items-center gap-1.5 shrink-0"
+                title="Corrigir ou editar fichas lançadas anteriormente"
+              >
+                <Edit3 className="w-3.5 h-3.5 text-slate-900" />
+                <span>Editar / Corrigir Fichas</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveScreen('historico')}
                 className="bg-white text-[#1a53db] hover:bg-blue-50 font-bold px-3.5 py-2.5 rounded-xl text-xs transition cursor-pointer shadow-sm flex items-center gap-1.5 shrink-0"
                 title="Consultar fichas já enviadas"
               >
@@ -361,6 +371,25 @@ export const SupervisorView: React.FC = () => {
             </div>
           </div>
         </div>
+
+        {fichasEnviadasAcumuladas > 0 && (
+          <div className="mt-3 bg-amber-50/90 border border-amber-200/90 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-900 shadow-2xs">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>
+                <strong>Lançou dados com erro?</strong> Pode editar e retificar qualquer ficha já enviada a qualquer momento.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActiveScreen('historico')}
+              className="bg-amber-500 hover:bg-amber-600 text-white font-extrabold px-3 py-1.5 rounded-lg text-xs shrink-0 cursor-pointer transition shadow-2xs flex items-center justify-center gap-1.5"
+            >
+              <Edit3 className="w-3.5 h-3.5" />
+              <span>Corrigir Lançamento Anterior</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Barra Superior */}

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { FichaAtividade } from '../types';
 import { CheckCircle2, Plus, Minus, Send, AlertTriangle, ArrowRight, Printer, Sparkles, Building2, MapPin, Award, CheckCircle, Edit3 } from 'lucide-react';
+import { MultiBairroSelector } from './MultiBairroSelector';
 
 interface FichaFormState {
   id: string;
@@ -41,7 +42,6 @@ export const SupervisorView: React.FC = () => {
   const { userSession, supervisores, submissoes, coordenacoes, addSubmissao, setActiveScreen } = useApp();
 
   const isSupervisorSession = userSession?.tipo === 'supervisor';
-  const [customBairroFichas, setCustomBairroFichas] = useState<Record<number, boolean>>({});
 
   // Lista de todos os bairros registados no sistema para seleção direta
   const todosBairrosCadastrados = useMemo(() => {
@@ -735,113 +735,31 @@ export const SupervisorView: React.FC = () => {
                         />
                       </div>
 
-                      {/* Bairro / Aldeia - Seleção Inteligente de Bairros Cadastrados */}
+                      {/* Bairro / Aldeia - Multi-seleção que abre ao clicar (sem ocupar espaço na tela) */}
                       <div className="form-group full-width">
                         <div className="flex items-center justify-between mb-1">
                           <label className="font-bold text-slate-800 text-xs sm:text-sm">
-                            <span className="required">*</span> Bairro / Aldeia
+                            <span className="required">*</span> Bairro(s) / Aldeia(s) de Atuação
                           </label>
                           <span className="text-[10px] sm:text-[11px] font-semibold text-[#1a53db] bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
-                            {todosBairrosCadastrados.length} Bairros no Sistema
+                            Pode marcar mais de 1 bairro
                           </span>
                         </div>
 
-                        {customBairroFichas[index] ? (
-                          <div className="space-y-1.5">
-                            <div className="flex gap-2">
-                              <input
-                                type="text"
-                                name="bairro[]"
-                                value={ficha.bairro}
-                                onChange={(e) => handleInputChange(index, 'bairro', e.target.value)}
-                                placeholder="Escreva o nome do novo bairro ou aldeia..."
-                                required
-                                autoFocus
-                                className="flex-1 text-xs sm:text-sm font-semibold"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setCustomBairroFichas((prev) => ({ ...prev, [index]: false }));
-                                  if (!ficha.bairro) {
-                                    handleInputChange(index, 'bairro', bairrosDaMinhaCoordenacao[0] || todosBairrosCadastrados[0] || '');
-                                  }
-                                }}
-                                className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-lg transition cursor-pointer border border-slate-300 shrink-0"
-                              >
-                                Ver Lista
-                              </button>
-                            </div>
-                            <p className="text-[11px] text-slate-500">
-                              A escrever bairro personalizado. Para escolher da lista existente, clique em &quot;Ver Lista&quot;.
-                            </p>
-                          </div>
-                        ) : (
-                          <div className="space-y-2">
-                            <div className="relative">
-                              <select
-                                name="bairro[]"
-                                value={ficha.bairro}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  if (val === '__outro__') {
-                                    setCustomBairroFichas((prev) => ({ ...prev, [index]: true }));
-                                    handleInputChange(index, 'bairro', '');
-                                  } else {
-                                    handleInputChange(index, 'bairro', val);
-                                  }
-                                }}
-                                required
-                                className="w-full font-bold text-slate-800 bg-white border border-slate-300 rounded-lg p-2.5 sm:p-3 text-xs sm:text-sm focus:border-[#2667ff] focus:ring-2 focus:ring-blue-100 transition cursor-pointer"
-                              >
-                                <option value="">-- Clique aqui para escolher o Bairro --</option>
-                                {bairrosDaMinhaCoordenacao.length > 0 && (
-                                  <optgroup label={`📍 Bairros da sua Coordenação (${activeSupervisor?.coordenacao || 'Sua Área'})`}>
-                                    {bairrosDaMinhaCoordenacao.map((b) => (
-                                      <option key={`my-${b}`} value={b}>
-                                        ★ {b}
-                                      </option>
-                                    ))}
-                                  </optgroup>
-                                )}
-                                <optgroup label="📋 Todos os Bairros Cadastrados no Sumbe">
-                                  {todosBairrosCadastrados.map((b) => (
-                                    <option key={`all-${b}`} value={b}>
-                                      {b}
-                                    </option>
-                                  ))}
-                                </optgroup>
-                                <option value="__outro__">✍️ Outro bairro (escrever manualmente)...</option>
-                              </select>
-                            </div>
+                        <MultiBairroSelector
+                          value={ficha.bairro}
+                          onChange={(newBairros) => handleInputChange(index, 'bairro', newBairros)}
+                          todosBairros={todosBairrosCadastrados}
+                          bairrosCoordenacao={bairrosDaMinhaCoordenacao}
+                          coordenacaoNome={activeSupervisor?.coordenacao}
+                          required={true}
+                          placeholder="Clique aqui para marcar os bairros visitados..."
+                        />
 
-                            {/* Atalhos rápidos de 1 toque para os bairros da coordenação */}
-                            {bairrosDaMinhaCoordenacao.length > 0 && (
-                              <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                                <span className="text-[11px] text-slate-500 font-medium">Toque rápido:</span>
-                                {bairrosDaMinhaCoordenacao.map((b) => (
-                                  <button
-                                    key={b}
-                                    type="button"
-                                    onClick={() => handleInputChange(index, 'bairro', b)}
-                                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer border ${
-                                      ficha.bairro === b
-                                        ? 'bg-[#2667ff] text-white border-[#2667ff] shadow-xs'
-                                        : 'bg-slate-100 text-slate-700 hover:bg-blue-50 hover:text-blue-700 border-slate-200'
-                                    }`}
-                                  >
-                                    {b}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-
-                            {activeSupervisor?.coordenacao && (
-                              <div className="text-[11px] text-slate-500">
-                                <span>Coordenação do Supervisor: </span>
-                                <strong className="text-slate-800">{activeSupervisor.coordenacao}</strong>
-                              </div>
-                            )}
+                        {activeSupervisor?.coordenacao && (
+                          <div className="text-[11px] text-slate-500 mt-1">
+                            <span>Coordenação do Supervisor: </span>
+                            <strong className="text-slate-800">{activeSupervisor.coordenacao}</strong>
                           </div>
                         )}
                       </div>

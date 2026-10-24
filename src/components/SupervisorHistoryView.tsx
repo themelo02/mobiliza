@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { Submissao, FichaAtividade } from '../types';
+import { MultiBairroSelector } from './MultiBairroSelector';
 import {
   FileText,
   Eye,
@@ -648,24 +649,15 @@ export const SupervisorHistoryView: React.FC = () => {
 
                       <div>
                         <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                          Bairro / Aldeia <span className="text-[#2667ff]">*</span>
+                          Bairro(s) / Aldeia(s) <span className="text-[#2667ff]">*</span>
                         </label>
-                        <select
-                          required
+                        <MultiBairroSelector
                           value={ficha.bairro}
-                          onChange={(e) => handleEditFichaChange(fIdx, 'bairro', e.target.value)}
-                          className="w-full text-xs font-bold py-1.5 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#2667ff] bg-white outline-none cursor-pointer"
-                        >
-                          <option value="">-- Selecione o Bairro Cadastrado --</option>
-                          {todosBairrosCadastrados.map((b) => (
-                            <option key={b} value={b}>
-                              {b}
-                            </option>
-                          ))}
-                          {ficha.bairro && !todosBairrosCadastrados.includes(ficha.bairro) && (
-                            <option value={ficha.bairro}>{ficha.bairro} (Personalizado)</option>
-                          )}
-                        </select>
+                          onChange={(newBairros) => handleEditFichaChange(fIdx, 'bairro', newBairros)}
+                          todosBairros={todosBairrosCadastrados}
+                          required={true}
+                          placeholder="Clique para marcar os bairros..."
+                        />
                       </div>
                     </div>
 

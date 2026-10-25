@@ -7,6 +7,7 @@ interface MultiBairroSelectorProps {
   todosBairros: string[];
   bairrosCoordenacao?: string[];
   coordenacaoNome?: string;
+  apenasCoordenacao?: boolean; // Se true, o supervisor só vê os bairros da sua coordenação
   required?: boolean;
   disabled?: boolean;
   placeholder?: string;
@@ -18,6 +19,7 @@ export const MultiBairroSelector: React.FC<MultiBairroSelectorProps> = ({
   todosBairros,
   bairrosCoordenacao = [],
   coordenacaoNome,
+  apenasCoordenacao = true,
   required = false,
   disabled = false,
   placeholder = 'Clique para marcar os Bairros visitados',
@@ -227,12 +229,14 @@ export const MultiBairroSelector: React.FC<MultiBairroSelectorProps> = ({
 
           {/* Lista com Checkboxes com Scroll Suave */}
           <div className="overflow-y-auto flex-1 p-2 space-y-3 divide-y divide-slate-100">
-            {/* Seção 1: Bairros da Coordenação */}
-            {filteredCoordBairros.length > 0 && (
+            {/* Seção 1: Bairros da Coordenação do Supervisor */}
+            {filteredCoordBairros.length > 0 ? (
               <div className="space-y-1">
                 <div className="text-[10px] uppercase font-bold text-blue-700 px-2 py-0.5 flex items-center justify-between">
                   <span>📍 Bairros da sua Coordenação {coordenacaoNome ? `(${coordenacaoNome})` : ''}</span>
-                  <span className="text-slate-400 font-normal">Prioritários</span>
+                  <span className="text-blue-800 font-semibold bg-blue-100/80 px-1.5 py-0.5 rounded text-[10px]">
+                    Sua Área de Trabalho
+                  </span>
                 </div>
                 <div className="space-y-0.5">
                   {filteredCoordBairros.map((b) => {
@@ -260,20 +264,24 @@ export const MultiBairroSelector: React.FC<MultiBairroSelectorProps> = ({
                           <span className="truncate">{b}</span>
                         </div>
                         <span className="text-[10px] text-blue-600 font-extrabold bg-blue-100/70 px-1.5 py-0.2 rounded">
-                          ★ Sua Área
+                          ★ Sua Coordenação
                         </span>
                       </label>
                     );
                   })}
                 </div>
               </div>
-            )}
+            ) : bairrosCoordenacao.length > 0 ? (
+              <div className="py-4 text-center text-xs text-slate-400">
+                Nenhum bairro da sua coordenação corresponde a &quot;{searchTerm}&quot;.
+              </div>
+            ) : null}
 
-            {/* Seção 2: Todos os Bairros Cadastrados no Sumbe */}
-            {filteredOutrosBairros.length > 0 && (
+            {/* Seção 2: Se a coordenação NÃO tiver bairros atribuídos ou se apenasCoordenacao for false */}
+            {(!apenasCoordenacao || bairrosCoordenacao.length === 0) && filteredOutrosBairros.length > 0 && (
               <div className="space-y-1 pt-2">
                 <div className="text-[10px] uppercase font-bold text-slate-500 px-2 py-0.5">
-                  📋 Outros Bairros Cadastrados no Sumbe
+                  📋 Bairros Cadastrados no Sumbe
                 </div>
                 <div className="space-y-0.5">
                   {filteredOutrosBairros.map((b) => {
@@ -308,9 +316,10 @@ export const MultiBairroSelector: React.FC<MultiBairroSelectorProps> = ({
             )}
 
             {/* Se não encontrou nenhum bairro no filtro */}
-            {filteredCoordBairros.length === 0 && filteredOutrosBairros.length === 0 && (
-              <div className="py-6 text-center text-xs text-slate-400">
-                Nenhum bairro cadastrado encontrado para &quot;{searchTerm}&quot;.
+            {((apenasCoordenacao && filteredCoordBairros.length === 0 && bairrosCoordenacao.length === 0) ||
+              (!apenasCoordenacao && filteredCoordBairros.length === 0 && filteredOutrosBairros.length === 0)) && (
+              <div className="py-4 text-center text-xs text-slate-400">
+                Nenhum bairro encontrado para &quot;{searchTerm}&quot;.
               </div>
             )}
 

@@ -49,7 +49,45 @@ interface EditableFichaState {
 }
 
 export const SupervisorHistoryView: React.FC = () => {
-  const { userSession, submissoes, coordenacoes, updateSubmissao, deleteSubmissao, setActiveScreen } = useApp();
+  const {
+    userSession,
+    submissoes,
+    coordenacoes,
+    updateSubmissao,
+    deleteSubmissao,
+    setActiveScreen,
+    isOnline,
+    offlineQueueCount,
+    isSyncingOffline,
+    syncOfflineSubmissoes,
+  } = useApp();
+
+  // Bairros específicos da coordenação do supervisor para filtrar
+  const activeSupervisorCoordBairros = useMemo(() => {
+    if (!userSession?.supervisor) return [];
+    const sup = userSession.supervisor;
+    const normalize = (str?: string) =>
+      (str || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/&/g, 'e')
+        .replace(/[^a-z0-9]/g, '')
+        .trim();
+
+    const supCoordNorm = normalize(sup.coordenacao);
+    const coord = (coordenacoes || []).find((c) => {
+      if (sup.coordenacaoId && c.id === sup.coordenacaoId) return true;
+      if (c.supervisorIds && c.supervisorIds.includes(sup.id)) return true;
+      const cNomeNorm = normalize(c.nome);
+      return (
+        (supCoordNorm && cNomeNorm === supCoordNorm) ||
+        (supCoordNorm && cNomeNorm.includes(supCoordNorm)) ||
+        (cNomeNorm && supCoordNorm.includes(cNomeNorm))
+      );
+    });
+    return (coord?.bairros || []).filter((b) => Boolean(b && b.trim()));
+  }, [userSession, coordenacoes]);
 
   // Lista de todos os bairros registados no sistema
   const todosBairrosCadastrados = useMemo(() => {
@@ -393,6 +431,38 @@ export const SupervisorHistoryView: React.FC = () => {
         </div>
       </div>
 
+      {/* Alerta de sincronização offline se houver ficheiros na fila local */}
+      {offlineQueueCount > 0 && (
+        <div className="bg-gradient-to-r from-amber-50 to-amber-100/90 border border-amber-300 rounded-xl p-3.5 sm:p-4 mb-4 sm:mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-amber-950 shadow-2xs">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">📴</span>
+            <div>
+              <div className="font-extrabold text-sm text-amber-900 flex items-center gap-2">
+                <span>{offlineQueueCount} {offlineQueueCount === 1 ? 'remessa guardada' : 'remessas guardadas'} no telemóvel</span>
+                <span className="bg-amber-200 text-amber-950 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                  Fila Offline
+                </span>
+              </div>
+              <p className="text-xs text-amber-800 mt-0.5">
+                {isOnline
+                  ? 'Ligação à internet restabelecida! Pode sincronizar agora para enviar os dados à coordenação.'
+                  : 'As fichas estão guardadas em segurança no aparelho. Serão enviadas automaticamente logo que tiver sinal.'}
+              </p>
+            </div>
+          </div>
+          {isOnline && (
+            <button
+              type="button"
+              onClick={() => syncOfflineSubmissoes()}
+              disabled={isSyncingOffline}
+              className="bg-amber-600 hover:bg-amber-700 text-white font-extrabold px-4 py-2 rounded-lg text-xs cursor-pointer shadow-2xs flex items-center justify-center gap-2 shrink-0 transition disabled:opacity-50"
+            >
+              <span>{isSyncingOffline ? 'A sincronizar...' : '🔄 Sincronizar Agora'}</span>
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Lista de Envios */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
         <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -443,9 +513,16 @@ export const SupervisorHistoryView: React.FC = () => {
                         Dia {sub.diaCampanha} da Campanha
                       </span>
                     )}
-                    <span className={`badge ${sub.status === 'Validado' ? 'badge-success' : 'badge-warning'}`}>
-                      {sub.status}
-                    </span>
+                    {sub.offlinePending ? (
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300 px-2.5 py-0.5 rounded-full">
+                        <span className="w-2 h-2 rounded-full bg-amber-600 animate-pulse"></span>
+                        📴 No Telemóvel (Aguarda Rede)
+                      </span>
+                    ) : (
+                      <span className={`badge ${sub.status === 'Validado' ? 'badge-success' : 'badge-warning'}`}>
+                        {sub.status}
+                      </span>
+                    )}
                   </div>
 
                   <div className="text-xs text-slate-600 flex flex-wrap items-center gap-x-3 gap-y-1 pt-0.5">
@@ -655,6 +732,9 @@ export const SupervisorHistoryView: React.FC = () => {
                           value={ficha.bairro}
                           onChange={(newBairros) => handleEditFichaChange(fIdx, 'bairro', newBairros)}
                           todosBairros={todosBairrosCadastrados}
+                          bairrosCoordenacao={activeSupervisorCoordBairros}
+                          coordenacaoNome={userSession?.supervisor?.coordenacao}
+                          apenasCoordenacao={true}
                           required={true}
                           placeholder="Clique para marcar os bairros..."
                         />

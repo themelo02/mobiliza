@@ -1,9 +1,18 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
-import { LayoutDashboard, LogOut, User, ShieldCheck, History, Eye } from 'lucide-react';
+import { LayoutDashboard, LogOut, User, ShieldCheck, History, Eye, WifiOff, RefreshCw } from 'lucide-react';
 
 export const NavigationHeader: React.FC = () => {
-  const { userSession, activeScreen, setActiveScreen, logout } = useApp();
+  const {
+    userSession,
+    activeScreen,
+    setActiveScreen,
+    logout,
+    isOnline,
+    offlineQueueCount,
+    syncOfflineSubmissoes,
+    isSyncingOffline,
+  } = useApp();
 
   if (!userSession) return null;
 
@@ -14,7 +23,7 @@ export const NavigationHeader: React.FC = () => {
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-xs">
       <div className="max-w-7xl mx-auto px-3 sm:px-6 min-h-[44px] py-1 flex items-center justify-between gap-1.5 sm:gap-3">
-        {/* LOGO INSTITUCIONAL COMPACTO */}
+        {/* LOGO INSTITUCIONAL COMPACTO E STATUS DE REDE */}
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           <div
             className="cursor-pointer flex items-center gap-1"
@@ -27,6 +36,40 @@ export const NavigationHeader: React.FC = () => {
               Mobilização Social
             </span>
           </div>
+
+          {/* Indicador de Estado de Conexão */}
+          {!isOnline && (
+            <span
+              className="inline-flex items-center gap-1 bg-amber-500 text-white text-[10px] sm:text-[11px] font-extrabold px-2 py-0.5 rounded-full shadow-2xs"
+              title="Sem ligação à internet no momento. Todos os dados são guardados no telemóvel."
+            >
+              <WifiOff className="w-3 h-3" />
+              <span>Offline</span>
+            </span>
+          )}
+
+          {/* Botão de Sincronização rápida se houver itens guardados no aparelho */}
+          {offlineQueueCount > 0 && (
+            <button
+              onClick={() => isOnline && syncOfflineSubmissoes()}
+              disabled={!isOnline || isSyncingOffline}
+              className={`inline-flex items-center gap-1 text-[10px] sm:text-[11px] font-extrabold px-2 py-0.5 rounded-full border transition cursor-pointer shadow-2xs ${
+                isOnline
+                  ? 'bg-blue-600 hover:bg-blue-700 text-white border-blue-700 animate-pulse'
+                  : 'bg-amber-100 text-amber-900 border-amber-300 opacity-90'
+              }`}
+              title={
+                isOnline
+                  ? 'Clique para sincronizar os dados guardados no telemóvel com o servidor'
+                  : 'Aguardando ligação de internet para enviar fichas guardadas no telemóvel'
+              }
+            >
+              <RefreshCw className={`w-3 h-3 ${isSyncingOffline ? 'animate-spin' : ''}`} />
+              <span>
+                {offlineQueueCount} {offlineQueueCount === 1 ? 'pendente' : 'pendentes'}
+              </span>
+            </button>
+          )}
         </div>
 
         {/* NAVEGAÇÃO DE CONTEXTO */}

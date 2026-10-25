@@ -24,6 +24,11 @@ interface AppContextType {
   activeScreen: 'formulario' | 'dashboard' | 'historico';
   isFirebaseConnected: boolean;
   isLoadingData: boolean;
+  isOnline: boolean;
+  offlineQueueCount: number;
+  isSyncingOffline: boolean;
+  offlineSyncToast: string;
+  syncOfflineSubmissoes: () => Promise<{ synced: number; failed: number }>;
   setActiveScreen: (screen: 'formulario' | 'dashboard' | 'historico') => void;
   login: (codigo: string, senha?: string) => { success: boolean; message?: string };
   logout: () => void;
@@ -59,15 +64,50 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 // Default fallback admin access code
 export const ADMIN_CODE = 'ADM2026';
 
+// Chave para fila de submissões pendentes realizadas offline
+const OFFLINE_QUEUE_KEY = 'ms_sumbe_offline_queue_v1';
+
+export const getOfflineQueue = (): Submissao[] => {
+  try {
+    const raw = localStorage.getItem(OFFLINE_QUEUE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {
+    // ignore
+  }
+  return [];
+};
+
+export const saveOfflineQueue = (queue: Submissao[]) => {
+  try {
+    localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
+  } catch {
+    // ignore
+  }
+};
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Pure Firestore-driven state: Never default to demo data unless explicit!
   const [supervisores, setSupervisores] = useState<Supervisor[]>([]);
-  const [submissoes, setSubmissoes] = useState<Submissao[]>([]);
+  const [submissoes, setSubmissoes] = useState<Submissao[]>(() => {
+    // Inicialização segura com as fichas offline salvas para nunca perder dados ao reiniciar
+    return getOfflineQueue();
+  });
   const [leitores, setLeitores] = useState<UtilizadorLeitura[]>([]);
   const [coordenacoes, setCoordenacoes] = useState<Coordenacao[]>([]);
   const [adminCode, setAdminCode] = useState<string>(ADMIN_CODE);
   const [isLoadingData, setIsLoadingData] = useState<boolean>(true);
   const [isFirebaseConnected, setIsFirebaseConnected] = useState<boolean>(false);
+
+  // Estados de Rede e Trabalho Offline
+  const [isOnline, setIsOnline] = useState<boolean>(() =>
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
+  const [offlineQueueCount, setOfflineQueueCount] = useState<number>(() => getOfflineQueue().length);
+  const [isSyncingOffline, setIsSyncingOffline] = useState<boolean>(false);
+  const [offlineSyncToast, setOfflineSyncToast] = useState<string>('');
 
   // Session state only (for maintaining login on page refresh)
   const [userSession, setUserSession] = useState<UserSession | null>(() => {
@@ -139,6 +179,83 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // ignore
     }
   }, [activeScreen]);
+
+  // Sincronização automática de fichas pendentes guardadas offline
+  const syncOfflineSubmissoes = async (): Promise<{ synced: number; failed: number }> => {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return { synced: 0, failed: 0 };
+    }
+
+    const queue = getOfflineQueue();
+    if (queue.length === 0) {
+      setOfflineQueueCount(0);
+      return { synced: 0, failed: 0 };
+    }
+
+    setIsSyncingOffline(true);
+    let synced = 0;
+    let failed = 0;
+    const remaining: Submissao[] = [];
+
+    for (const item of queue) {
+      try {
+        const itemSynced: Submissao = {
+          ...item,
+          status: 'Validado',
+          offlinePending: false,
+        };
+        await setDoc(doc(db, 'submissoes', item.id), itemSynced);
+        synced++;
+        // Atualiza a ficha na lista local para refletir que agora está validada no servidor
+        setSubmissoes((prev) =>
+          prev.map((s) => (s.id === item.id ? itemSynced : s))
+        );
+      } catch (err) {
+        console.warn('Falha ao sincronizar ficha offline:', item.id, err);
+        remaining.push(item);
+        failed++;
+      }
+    }
+
+    saveOfflineQueue(remaining);
+    setOfflineQueueCount(remaining.length);
+    setIsSyncingOffline(false);
+
+    if (synced > 0) {
+      setOfflineSyncToast(
+        `${synced} ${synced === 1 ? 'ficha offline enviada' : 'fichas offline enviadas'} com sucesso para a base central!`
+      );
+      setTimeout(() => setOfflineSyncToast(''), 6000);
+    }
+
+    return { synced, failed };
+  };
+
+  // Monitor de estado de rede Online/Offline do navegador e telemóvel
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      // Quando apanha rede, dispara a sincronização automática das fichas pendentes
+      syncOfflineSubmissoes();
+    };
+
+    const handleOffline = () => {
+      setIsOnline(false);
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    // Tentativa inicial se tiver rede e fichas pendentes no telemóvel
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      syncOfflineSubmissoes();
+    }
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   // Firestore Initialization & Realtime Listeners
   useEffect(() => {
@@ -267,12 +384,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             snapshot.forEach((docSnap) => {
               loaded.push(docSnap.data() as Submissao);
             });
+            // Preservar fichas que foram preenchidas offline e aguardam rede para sincronizar
+            const queue = getOfflineQueue();
+            const pendingOffline = queue.filter(
+              (q) => !loaded.some((item) => item.id === q.id)
+            );
+            const allSubmissoes = [...pendingOffline, ...loaded];
             // Sort by dataEnvio descending
-            loaded.sort(
+            allSubmissoes.sort(
               (a, b) => new Date(b.dataEnvio).getTime() - new Date(a.dataEnvio).getTime()
             );
             // ALWAYS update state directly from Firestore snapshot (even if 0 items!)
-            setSubmissoes(loaded);
+            setSubmissoes(allSubmissoes);
           },
           (error) => {
             handleFirestoreError(error, OperationType.LIST, 'submissoes');
@@ -643,11 +766,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Coordenacao CRUD with Firestore Persistence (Cada coordenação tem 1 a 2 supervisores)
   const addCoordenacao = async (data: Omit<Coordenacao, 'id' | 'dataCriacao'>): Promise<Coordenacao> => {
     const newId = `coord-${Date.now()}`;
+    const dias = Math.max(1, Number(data.diasTrabalho) || 5);
+    const mobilizadores = Math.max(1, Number(data.totalMobilizadores) || 10);
+    const fichasPorMob = Math.max(1, Number(data.fichasDiariasPorMobilizador) || 5);
+    const totalFichasDiarias = mobilizadores * fichasPorMob;
+    const metaFichasTotal = data.metaFichasTotal !== undefined && data.metaFichasTotal > 0
+      ? data.metaFichasTotal
+      : totalFichasDiarias * dias;
+    
+    const supIds = (data.supervisorIds || []).slice(0, 2);
+    const numSups = Math.max(1, supIds.length);
+    const fichasPorSupervisor = Math.round(metaFichasTotal / numSups);
+    const fichasDiariasPorSupervisor = Math.max(1, Math.round(totalFichasDiarias / numSups));
+
     const newCoord: Coordenacao = {
       ...data,
       id: newId,
       limiteSupervisores: 2,
-      supervisorIds: (data.supervisorIds || []).slice(0, 2),
+      supervisorIds: supIds,
+      diasTrabalho: dias,
+      totalMobilizadores: mobilizadores,
+      fichasDiariasPorMobilizador: fichasPorMob,
+      totalFichasDiarias: totalFichasDiarias,
+      metaFichasTotal: metaFichasTotal,
+      fichasPorSupervisor: fichasPorSupervisor,
+      fichasDiariasPorSupervisor: fichasDiariasPorSupervisor,
       dataCriacao: new Date().toISOString().split('T')[0],
     };
 
@@ -659,18 +802,66 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       handleFirestoreError(e, OperationType.CREATE, `coordenacoes/${newId}`);
     }
 
+    // Estruturar e sincronizar imediatamente os supervisores vinculados
+    for (const supId of supIds) {
+      await updateSupervisor(supId, {
+        coordenacao: newCoord.nome,
+        coordenacaoId: newId,
+        totalFichasPrevistas: fichasPorSupervisor,
+        fichasDiariasPrevistas: fichasDiariasPorSupervisor,
+        diasTrabalhoPrevistos: dias,
+      });
+    }
+
     return newCoord;
   };
 
   const updateCoordenacao = async (id: string, data: Partial<Coordenacao>): Promise<void> => {
+    const existing = coordenacoes.find((c) => c.id === id);
+    const dias = Math.max(1, Number(data.diasTrabalho ?? existing?.diasTrabalho ?? 5));
+    const mobilizadores = Math.max(1, Number(data.totalMobilizadores ?? existing?.totalMobilizadores ?? 10));
+    const fichasPorMob = Math.max(1, Number(data.fichasDiariasPorMobilizador ?? existing?.fichasDiariasPorMobilizador ?? 5));
+    const totalFichasDiarias = mobilizadores * fichasPorMob;
+    const metaFichasTotal = data.metaFichasTotal !== undefined && data.metaFichasTotal > 0
+      ? data.metaFichasTotal
+      : totalFichasDiarias * dias;
+
+    const supIds = (data.supervisorIds ?? existing?.supervisorIds ?? []).slice(0, 2);
+    const numSups = Math.max(1, supIds.length);
+    const fichasPorSupervisor = Math.round(metaFichasTotal / numSups);
+    const fichasDiariasPorSupervisor = Math.max(1, Math.round(totalFichasDiarias / numSups));
+
+    const enrichedData: Partial<Coordenacao> = {
+      ...data,
+      diasTrabalho: dias,
+      totalMobilizadores: mobilizadores,
+      fichasDiariasPorMobilizador: fichasPorMob,
+      totalFichasDiarias: totalFichasDiarias,
+      metaFichasTotal: metaFichasTotal,
+      fichasPorSupervisor: fichasPorSupervisor,
+      fichasDiariasPorSupervisor: fichasDiariasPorSupervisor,
+    };
+
     setCoordenacoes((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, ...data } : c))
+      prev.map((c) => (c.id === id ? { ...c, ...enrichedData } : c))
     );
 
     try {
-      await updateDoc(doc(db, 'coordenacoes', id), data);
+      await updateDoc(doc(db, 'coordenacoes', id), enrichedData);
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, `coordenacoes/${id}`);
+    }
+
+    // Sincronizar estruturação de metas e dias nos supervisores da coordenação
+    const coordNome = enrichedData.nome || existing?.nome || 'Coordenação';
+    for (const supId of supIds) {
+      await updateSupervisor(supId, {
+        coordenacao: coordNome,
+        coordenacaoId: id,
+        totalFichasPrevistas: fichasPorSupervisor,
+        fichasDiariasPrevistas: fichasDiariasPorSupervisor,
+        diasTrabalhoPrevistos: dias,
+      });
     }
   };
 
@@ -707,14 +898,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const updatedIds = [...targetCoord.supervisorIds, supervisorId];
     await updateCoordenacao(coordenacaoId, { supervisorIds: updatedIds });
 
-    const sup = supervisores.find((s) => s.id === supervisorId);
-    if (sup) {
-      await updateSupervisor(supervisorId, {
-        coordenacao: targetCoord.nome,
-        coordenacaoId: targetCoord.id,
-      });
-    }
-
     return { success: true };
   };
 
@@ -737,21 +920,43 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  // Submissao CRUD with Firestore Persistence
+  // Submissao CRUD com suporte total a Trabalho Offline e Persistência no Firestore
   const addSubmissao = async (subData: Omit<Submissao, 'id' | 'dataEnvio'>): Promise<Submissao> => {
     const newId = `sub-${Date.now()}`;
+    const isCurrentlyOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+
     const newSub: Submissao = {
       ...subData,
       id: newId,
       dataEnvio: new Date().toISOString(),
+      offlinePending: !isCurrentlyOnline,
+      status: isCurrentlyOnline ? 'Validado' : 'Pendente',
     };
 
+    // Atualização otimista imediata na lista de submissões em memória
     setSubmissoes((prev) => [newSub, ...prev]);
 
+    // Se estiver sem rede (offline), armazena imediatamente na fila segura do telemóvel
+    if (!isCurrentlyOnline) {
+      const queue = getOfflineQueue();
+      queue.push(newSub);
+      saveOfflineQueue(queue);
+      setOfflineQueueCount(queue.length);
+      return newSub;
+    }
+
+    // Se estiver online, tenta enviar diretamente para o Firestore
     try {
       await setDoc(doc(db, 'submissoes', newId), newSub);
     } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, `submissoes/${newId}`);
+      // Se a conexão falhar ou cair durante o envio no terreno, guarda na fila offline para não perder nada
+      console.warn('Conexão instável durante envio. Guardando ficha com segurança no telemóvel:', e);
+      const queue = getOfflineQueue();
+      const offlineSub: Submissao = { ...newSub, offlinePending: true, status: 'Pendente' };
+      queue.push(offlineSub);
+      saveOfflineQueue(queue);
+      setOfflineQueueCount(queue.length);
+      setSubmissoes((prev) => prev.map((s) => (s.id === newId ? offlineSub : s)));
     }
 
     return newSub;
@@ -891,6 +1096,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // CLEAR ALL SUBMISSIONS (TOTAL AUTHORITY)
   const clearAllSubmissoes = async (): Promise<void> => {
     setSubmissoes([]);
+    saveOfflineQueue([]);
+    setOfflineQueueCount(0);
     try {
       const snap = await getDocs(collection(db, 'submissoes'));
       const batch = writeBatch(db);
@@ -986,6 +1193,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         activeScreen,
         isFirebaseConnected,
         isLoadingData,
+        isOnline,
+        offlineQueueCount,
+        isSyncingOffline,
+        offlineSyncToast,
+        syncOfflineSubmissoes,
         setActiveScreen,
         login,
         logout,

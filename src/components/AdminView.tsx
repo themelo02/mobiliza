@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useApp, ADMIN_CODE } from '../context/AppContext';
 import { Supervisor, Submissao, COMUNAS_SUMBE, UtilizadorLeitura, Coordenacao } from '../types';
 import { exportarFichasParaExcel, formatarDataPt, formatarHoraPt } from '../utils/excelExport';
+import { exportarRelatorioParaPDF, calcularTotaisCategorias } from '../utils/pdfExport';
 import {
   BarChart,
   Bar,
@@ -67,6 +68,16 @@ import {
   AlertCircle,
   ChevronDown,
   ChevronUp,
+  Home,
+  Church,
+  ShoppingBag,
+  Car,
+  Baby,
+  GraduationCap,
+  Droplets,
+  MoreHorizontal,
+  FileDown,
+  Sparkles,
 } from 'lucide-react';
 
 const COLORS_9_SUPERVISORES = [
@@ -168,14 +179,17 @@ export const AdminView: React.FC = () => {
   // Mobile Drawer State
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  // Coordenação Form State (Cada coordenação tem 1 a 2 supervisores)
+  // Coordenação Form State (Cada coordenação tem 1 a 2 supervisores com cálculo estruturado de mobilizadores × fichas)
   const [showAddCoordenacaoModal, setShowAddCoordenacaoModal] = useState(false);
   const [editingCoordenacao, setEditingCoordenacao] = useState<Coordenacao | null>(null);
   const [newCoordNome, setNewCoordNome] = useState('');
   const [newCoordDescricao, setNewCoordDescricao] = useState('');
   const [newCoordBairros, setNewCoordBairros] = useState('');
   const [newCoordSupervisorIds, setNewCoordSupervisorIds] = useState<string[]>([]);
-  const [newCoordMetaFichas, setNewCoordMetaFichas] = useState<number>(50);
+  const [newCoordDiasTrabalho, setNewCoordDiasTrabalho] = useState<number>(5);
+  const [newCoordTotalMobilizadores, setNewCoordTotalMobilizadores] = useState<number>(10);
+  const [newCoordFichasDiariasPorMob, setNewCoordFichasDiariasPorMob] = useState<number>(5);
+  const [newCoordMetaFichas, setNewCoordMetaFichas] = useState<number>(250);
   const [isCreatingCoord, setIsCreatingCoord] = useState(false);
   const [coordSuccessMsg, setCoordSuccessMsg] = useState('');
 
@@ -184,7 +198,10 @@ export const AdminView: React.FC = () => {
   const [editCoordDescricao, setEditCoordDescricao] = useState('');
   const [editCoordBairros, setEditCoordBairros] = useState('');
   const [editCoordSupervisorIds, setEditCoordSupervisorIds] = useState<string[]>([]);
-  const [editCoordMetaFichas, setEditCoordMetaFichas] = useState<number>(50);
+  const [editCoordDiasTrabalho, setEditCoordDiasTrabalho] = useState<number>(5);
+  const [editCoordTotalMobilizadores, setEditCoordTotalMobilizadores] = useState<number>(10);
+  const [editCoordFichasDiariasPorMob, setEditCoordFichasDiariasPorMob] = useState<number>(5);
+  const [editCoordMetaFichas, setEditCoordMetaFichas] = useState<number>(250);
   const [isSavingCoord, setIsSavingCoord] = useState(false);
 
   // Assign Supervisor to Coordenação Quick Modal
@@ -331,12 +348,113 @@ export const AdminView: React.FC = () => {
   const [filterComuna, setFilterComuna] = useState<string>('todos');
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Estados da Estrutura de Relatórios: 'geral' | 'supervisor' | 'data_lancamento' | 'coordenacao'
-  const [relatorioSubView, setRelatorioSubView] = useState<'geral' | 'supervisor' | 'data_lancamento' | 'coordenacao'>('geral');
+  // Estados da Estrutura de Relatórios: 'executivo' | 'geral' | 'supervisor' | 'data_lancamento' | 'coordenacao'
+  const [relatorioSubView, setRelatorioSubView] = useState<'executivo' | 'geral' | 'supervisor' | 'data_lancamento' | 'coordenacao'>('executivo');
   const [relatorioSupervisorId, setRelatorioSupervisorId] = useState<string>('todos');
   const [relatorioCoordenacaoId, setRelatorioCoordenacaoId] = useState<string>('todas');
   const [relatorioDataFilter, setRelatorioDataFilter] = useState<string>('todas');
   const [relatorioDataLancamentoFilter, setRelatorioDataLancamentoFilter] = useState<string>('todas');
+  const [relatorioExecutivoSearch, setRelatorioExecutivoSearch] = useState<string>('');
+  const [isExportingPdf, setIsExportingPdf] = useState<boolean>(false);
+  const [pdfExportToast, setPdfExportToast] = useState<string>('');
+
+  // Submissões filtradas para o Relatório Executivo Especializado (Azul Torrado com as 8 categorias)
+  const submissoesExecutivoFiltradas = useMemo(() => {
+    return submissoes.filter((sub) => {
+      // 1. Filtro por Supervisor
+      if (relatorioSupervisorId !== 'todos' && sub.supervisorId !== relatorioSupervisorId) {
+        return false;
+      }
+
+      // 2. Filtro por Coordenação
+      if (relatorioCoordenacaoId !== 'todas') {
+        const sup = supervisores.find((s) => s.id === sub.supervisorId);
+        const coord = coordenacoes.find((c) => c.id === relatorioCoordenacaoId);
+        if (!sup || !coord) return false;
+        const matchesCoord =
+          (coord.supervisorIds && coord.supervisorIds.includes(sup.id)) ||
+          sup.coordenacaoId === coord.id ||
+          (coord.nome && sup.coordenacao && sup.coordenacao.toLowerCase().trim() === coord.nome.toLowerCase().trim());
+        if (!matchesCoord) return false;
+      }
+
+      // 3. Filtro por Data (data da atividade ou data do envio)
+      if (relatorioDataFilter !== 'todas') {
+        const dataEnvioKey = (sub.dataEnvio || '').slice(0, 10);
+        if (sub.data !== relatorioDataFilter && dataEnvioKey !== relatorioDataFilter) {
+          return false;
+        }
+      }
+
+      // 4. Pesquisa textual livre (Supervisor, Bairro, Comuna)
+      if (relatorioExecutivoSearch.trim()) {
+        const term = relatorioExecutivoSearch.toLowerCase().trim();
+        const supNome = (sub.supervisorNome || '').toLowerCase();
+        const mun = (sub.municipio || '').toLowerCase();
+        const prov = (sub.provincia || '').toLowerCase();
+        const bairroMatch = (sub.fichas || []).some((f) => (f.bairro || '').toLowerCase().includes(term));
+        if (!supNome.includes(term) && !mun.includes(term) && !prov.includes(term) && !bairroMatch) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [submissoes, supervisores, coordenacoes, relatorioSupervisorId, relatorioCoordenacaoId, relatorioDataFilter, relatorioExecutivoSearch]);
+
+  // Totais das 8 categorias específicas calculados a partir das submissões filtradas
+  const totais8Pontos = useMemo(() => {
+    return calcularTotaisCategorias(submissoesExecutivoFiltradas);
+  }, [submissoesExecutivoFiltradas]);
+
+  // Resumo de contadores do Relatório Executivo
+  const resumoExecutivo = useMemo(() => {
+    const t = totais8Pontos;
+    const totalLocais =
+      t.casa.locais +
+      t.igrejas.locais +
+      t.pracas.locais +
+      t.paragem.locais +
+      t.creches.locais +
+      t.escolas.locais +
+      t.agua.locais +
+      t.outros.locais;
+
+    const totalPessoas =
+      t.casa.pessoas +
+      t.igrejas.pessoas +
+      t.pracas.pessoas +
+      t.paragem.pessoas +
+      t.creches.pessoas +
+      t.escolas.pessoas +
+      t.agua.pessoas +
+      t.outros.pessoas;
+
+    let totalSim = 0;
+    let totalNao = 0;
+    let totalFichas = 0;
+
+    submissoesExecutivoFiltradas.forEach((s) => {
+      totalFichas += s.fichas?.length || 0;
+      (s.fichas || []).forEach((f) => {
+        totalSim += Number(f.total_sim) || 0;
+        totalNao += Number(f.total_nao) || 0;
+      });
+    });
+
+    const totalAbordadas = totalSim + totalNao > 0 ? totalSim + totalNao : totalPessoas;
+    const taxaAdesao = totalAbordadas > 0 ? ((totalSim / totalAbordadas) * 100).toFixed(1) : '100.0';
+
+    return {
+      totalLocais,
+      totalPessoas,
+      totalSim,
+      totalNao,
+      totalFichas,
+      totalAbordadas,
+      taxaAdesao,
+    };
+  }, [totais8Pontos, submissoesExecutivoFiltradas]);
 
   // Agrupamento de submissões por data de lançamento no sistema (dataEnvio / carimbo de submissão)
   const datasLancamentoAgrupadas = useMemo(() => {
@@ -1296,6 +1414,12 @@ export const AdminView: React.FC = () => {
         .map((b) => b.trim())
         .filter((b) => b.length > 0);
 
+      const dias = Math.max(1, Number(newCoordDiasTrabalho) || 5);
+      const mobilizadores = Math.max(1, Number(newCoordTotalMobilizadores) || 10);
+      const porMob = Math.max(1, Number(newCoordFichasDiariasPorMob) || 5);
+      const totalDiarias = mobilizadores * porMob;
+      const metaTotal = Math.max(1, Number(newCoordMetaFichas) || totalDiarias * dias);
+
       const created = await addCoordenacao({
         nome: newCoordNome.trim(),
         descricao: newCoordDescricao.trim() || 'Setor de mobilização comunitária no Sumbe',
@@ -1304,25 +1428,26 @@ export const AdminView: React.FC = () => {
         comuna: 'Sede',
         supervisorIds: newCoordSupervisorIds.slice(0, 2),
         limiteSupervisores: 2,
-        metaFichasTotal: Math.max(1, Number(newCoordMetaFichas) || 50),
+        diasTrabalho: dias,
+        totalMobilizadores: mobilizadores,
+        fichasDiariasPorMobilizador: porMob,
+        totalFichasDiarias: totalDiarias,
+        metaFichasTotal: metaTotal,
       });
-
-      // Update supervisors assigned
-      for (const supId of newCoordSupervisorIds) {
-        await updateSupervisor(supId, {
-          coordenacao: created.nome,
-          coordenacaoId: created.id,
-        });
-      }
 
       setNewCoordNome('');
       setNewCoordDescricao('');
       setNewCoordBairros('');
       setNewCoordSupervisorIds([]);
-      setNewCoordMetaFichas(50);
+      setNewCoordDiasTrabalho(5);
+      setNewCoordTotalMobilizadores(10);
+      setNewCoordFichasDiariasPorMob(5);
+      setNewCoordMetaFichas(250);
       setShowAddCoordenacaoModal(false);
-      setCoordSuccessMsg(`Coordenação "${created.nome}" cadastrada com sucesso com ${created.supervisorIds.length} supervisor(es)!`);
-      setTimeout(() => setCoordSuccessMsg(''), 6000);
+      setCoordSuccessMsg(
+        `Coordenação "${created.nome}" cadastrada com sucesso!\n${mobilizadores} mobilizadores × ${porMob} fichas/dia = ${totalDiarias} fichas/dia (${metaTotal} fichas em ${dias} dias).`
+      );
+      setTimeout(() => setCoordSuccessMsg(''), 7000);
     } catch {
       alert('Erro ao gravar coordenação no Firebase.');
     } finally {
@@ -1354,12 +1479,21 @@ export const AdminView: React.FC = () => {
   };
 
   const handleOpenEditCoordenacao = (coord: Coordenacao) => {
+    const dias = coord.diasTrabalho || 5;
+    const mob = coord.totalMobilizadores || 10;
+    const porMob = coord.fichasDiariasPorMobilizador || 5;
+    const totalDiario = mob * porMob;
+    const totalGeral = coord.metaFichasTotal || totalDiario * dias;
+
     setEditingCoordenacao(coord);
     setEditCoordNome(coord.nome);
     setEditCoordDescricao(coord.descricao || '');
     setEditCoordBairros((coord.bairros || []).join(', '));
     setEditCoordSupervisorIds(coord.supervisorIds || []);
-    setEditCoordMetaFichas(coord.metaFichasTotal || 50);
+    setEditCoordDiasTrabalho(dias);
+    setEditCoordTotalMobilizadores(mob);
+    setEditCoordFichasDiariasPorMob(porMob);
+    setEditCoordMetaFichas(totalGeral);
   };
 
   const handleSaveEditCoordenacao = async (e: React.FormEvent) => {
@@ -1381,25 +1515,29 @@ export const AdminView: React.FC = () => {
         .map((b) => b.trim())
         .filter((b) => b.length > 0);
 
+      const dias = Math.max(1, Number(editCoordDiasTrabalho) || 5);
+      const mob = Math.max(1, Number(editCoordTotalMobilizadores) || 10);
+      const porMob = Math.max(1, Number(editCoordFichasDiariasPorMob) || 5);
+      const totalDiarias = mob * porMob;
+      const metaTotal = Math.max(1, Number(editCoordMetaFichas) || totalDiarias * dias);
+
       await updateCoordenacao(editingCoordenacao.id, {
         nome: editCoordNome.trim(),
         descricao: editCoordDescricao.trim(),
         bairros: bairrosArray.length > 0 ? bairrosArray : ['Sede'],
         supervisorIds: editCoordSupervisorIds.slice(0, 2),
-        metaFichasTotal: Math.max(1, Number(editCoordMetaFichas) || 50),
+        diasTrabalho: dias,
+        totalMobilizadores: mob,
+        fichasDiariasPorMobilizador: porMob,
+        totalFichasDiarias: totalDiarias,
+        metaFichasTotal: metaTotal,
       });
 
-      // Atualizar o nome da coordenação nos supervisores vinculados
-      for (const supId of editCoordSupervisorIds) {
-        await updateSupervisor(supId, {
-          coordenacao: editCoordNome.trim(),
-          coordenacaoId: editingCoordenacao.id,
-        });
-      }
-
       setEditingCoordenacao(null);
-      setCoordSuccessMsg(`Coordenação "${editCoordNome.trim()}" atualizada com sucesso!`);
-      setTimeout(() => setCoordSuccessMsg(''), 6000);
+      setCoordSuccessMsg(
+        `Coordenação "${editCoordNome.trim()}" atualizada com sucesso!\n${mob} mobilizadores × ${porMob} fichas/dia = ${totalDiarias} fichas/dia (${metaTotal} fichas em ${dias} dias).`
+      );
+      setTimeout(() => setCoordSuccessMsg(''), 7000);
     } catch {
       alert('Erro ao atualizar coordenação no Firebase.');
     } finally {
@@ -1685,6 +1823,41 @@ export const AdminView: React.FC = () => {
     } finally {
       setIsExportingExcel(false);
     }
+  };
+
+  const handleExportPDF = () => {
+    try {
+      setIsExportingPdf(true);
+      const supObj = supervisores.find((s) => s.id === relatorioSupervisorId);
+      const coordObj = coordenacoes.find((c) => c.id === relatorioCoordenacaoId);
+
+      exportarRelatorioParaPDF({
+        submissoes: submissoesExecutivoFiltradas,
+        supervisores,
+        coordenacoes,
+        filtroSupervisorNome: supObj ? `${supObj.nome} (${supObj.codigo})` : 'Todos os Supervisores',
+        filtroCoordenacaoNome: coordObj ? coordObj.nome : 'Todas as Coordenações',
+        filtroDataStr: relatorioDataFilter !== 'todas' ? formatarDataPt(relatorioDataFilter) : 'Todas as Datas',
+        totaisCategorias: totais8Pontos,
+      });
+
+      setPdfExportToast('Relatório Oficial em PDF (.pdf) exportado com sucesso!');
+      setTimeout(() => setPdfExportToast(''), 4500);
+    } catch (err) {
+      console.error('Erro ao exportar PDF:', err);
+      alert('Ocorreu um erro ao gerar o relatório em PDF.');
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
+  const handleExportExcelRelatorio = () => {
+    const supObj = supervisores.find((s) => s.id === relatorioSupervisorId);
+    handleExportExcel({
+      supervisorId: relatorioSupervisorId,
+      dataLancamento: relatorioDataFilter !== 'todas' ? relatorioDataFilter : undefined,
+      titulo: supObj ? `Executivo_${supObj.nome}` : 'Executivo_8_Categorias',
+    });
   };
 
   return (
@@ -4229,15 +4402,22 @@ export const AdminView: React.FC = () => {
                   </div>
                 ) : (
                   coordenacoes.map((coord) => {
+                    const diasCoord = coord.diasTrabalho || 5;
+                    const mobCoord = coord.totalMobilizadores || 10;
+                    const porMobCoord = coord.fichasDiariasPorMobilizador || 5;
+                    const totalDiariasCoord = coord.totalFichasDiarias || mobCoord * porMobCoord;
+                    const metaCoord = coord.metaFichasTotal || totalDiariasCoord * diasCoord;
+
+                    const numSupervisores = coord.supervisorIds?.length || 0;
+                    const cotaPorSup = numSupervisores === 2 ? Math.round(metaCoord / 2) : metaCoord;
+                    const cotaDiariaPorSup = numSupervisores === 2 ? Math.round(totalDiariasCoord / 2) : totalDiariasCoord;
+                    const temVaga = numSupervisores < (coord.limiteSupervisores || 2);
+
                     const coordSups = supervisores.filter((s) => coord.supervisorIds?.includes(s.id));
                     const coordSubmissoes = submissoes.filter((sub) => coord.supervisorIds?.includes(sub.supervisorId));
                     const totalFichasCoord = coordSubmissoes.reduce((acc, sub) => acc + sub.fichas.length, 0);
                     const totalPessoasCoord = coordSubmissoes.reduce((acc, sub) => acc + sub.totalPessoas, 0);
-                    const metaCoord = coord.metaFichasTotal || 50;
                     const pctCumprimento = Math.min(100, Math.round((totalFichasCoord / metaCoord) * 100));
-
-                    const numSupervisores = coord.supervisorIds?.length || 0;
-                    const temVaga = numSupervisores < (coord.limiteSupervisores || 2);
 
                     return (
                       <div
@@ -4279,30 +4459,60 @@ export const AdminView: React.FC = () => {
                             </span>
                           </div>
 
+                          {/* Badges Estruturados: Mobilizadores, Dias e Fichas/Dia */}
+                          <div className="flex flex-wrap items-center gap-1.5 mt-2.5 mb-2">
+                            <span className="bg-purple-50 text-purple-900 border border-purple-200 text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1">
+                              <Users className="w-3 h-3 text-purple-600" />
+                              <span>{mobCoord} Mobilizadores</span>
+                            </span>
+                            <span className="bg-blue-50 text-blue-900 border border-blue-200 text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1">
+                              <CalendarDays className="w-3 h-3 text-blue-600" />
+                              <span>{diasCoord} Dias de Trabalho</span>
+                            </span>
+                            <span className="bg-emerald-50 text-emerald-900 border border-emerald-200 text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1">
+                              <Target className="w-3 h-3 text-emerald-600" />
+                              <span>{totalDiariasCoord} fichas/dia</span>
+                            </span>
+                          </div>
+
                           {/* Descrição */}
                           {coord.descricao && (
-                            <p className="text-xs text-slate-600 mt-2 mb-3 leading-relaxed">
+                            <p className="text-xs text-slate-600 mt-1 mb-3 leading-relaxed">
                               {coord.descricao}
                             </p>
                           )}
 
-                          {/* Meta & Progresso da Coordenação */}
-                          <div className="mt-3.5 p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2">
+                          {/* Meta & Progresso da Coordenação com Cálculo Estruturado */}
+                          <div className="mt-3 p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-2.5">
                             <div className="flex items-center justify-between text-xs">
-                              <span className="font-semibold text-slate-700">Fichas Lançadas na Coordenação:</span>
-                              <span className="font-mono font-bold text-purple-800">
+                              <span className="font-semibold text-slate-700">Fichas Lançadas:</span>
+                              <span className="font-mono font-bold text-purple-900">
                                 {totalFichasCoord} / {metaCoord} ({pctCumprimento}%)
                               </span>
                             </div>
-                            <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                            <div className="w-full bg-slate-200 rounded-full h-2.5 overflow-hidden">
                               <div
                                 className="bg-purple-600 h-full rounded-full transition-all duration-500"
                                 style={{ width: `${pctCumprimento}%` }}
                               ></div>
                             </div>
+                            <div className="bg-white p-2.5 rounded-lg border border-purple-100 text-[11px] text-purple-950 space-y-1">
+                              <div className="flex items-center justify-between text-slate-600">
+                                <span>Cálculo da Coordenação:</span>
+                                <span className="font-mono font-bold text-purple-800">
+                                  {mobCoord} mob. × {porMobCoord} fichas/dia × {diasCoord}d = {metaCoord} fichas
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between text-[#1a53db] font-semibold border-t border-slate-100 pt-1">
+                                <span>Cota por Supervisor ({numSupervisores} atribuído{numSupervisores !== 1 ? 's' : ''}):</span>
+                                <span className="font-bold text-slate-900">
+                                  {cotaPorSup} fichas ({cotaDiariaPorSup}/dia)
+                                </span>
+                              </div>
+                            </div>
                             <div className="flex items-center justify-between text-[11px] text-slate-500 pt-0.5">
                               <span>Pessoas mobilizadas: <strong>{totalPessoasCoord.toLocaleString('pt-PT')}</strong></span>
-                              <span>Meta: <strong>{metaCoord} fichas</strong></span>
+                              <span>Meta total: <strong>{metaCoord} fichas</strong></span>
                             </div>
                           </div>
 
@@ -5137,9 +5347,19 @@ export const AdminView: React.FC = () => {
                     )}
                     <button
                       type="button"
-                      onClick={() => handleExportExcel()}
+                      onClick={() => handleExportPDF()}
+                      disabled={isExportingPdf}
+                      className="bg-[#0f172a] hover:bg-[#1e3a8a] text-white font-bold px-3.5 py-2 rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer border border-blue-900/60"
+                      title="Descarregar Relatório Executivo Oficial em PDF (.pdf) com layout Azul Torrado e as 8 categorias"
+                    >
+                      <FileDown className="w-4 h-4 text-amber-400" />
+                      <span>{isExportingPdf ? 'A Gerar PDF...' : 'Exportar PDF (.pdf)'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleExportExcelRelatorio()}
                       disabled={isExportingExcel}
-                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-2 rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3.5 py-2 rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
                       title="Descarregar ficheiro Excel (.xlsx) completo com todas as fichas, resumo por supervisor e por datas de lançamento"
                     >
                       <FileSpreadsheet className="w-4 h-4" />
@@ -5160,12 +5380,28 @@ export const AdminView: React.FC = () => {
                       className="bg-slate-700 hover:bg-slate-800 text-white font-semibold px-3 py-2 rounded-lg text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
                     >
                       <Printer className="w-4 h-4" />
-                      <span>Imprimir Relatório</span>
+                      <span>Imprimir</span>
                     </button>
                   </div>
                 </div>
 
-                {/* NOTIFICAÇÃO DE EXPORTAÇÃO EXCEL CONCLUÍDA */}
+                {/* NOTIFICAÇÃO DE EXPORTAÇÃO PDF OU EXCEL CONCLUÍDA */}
+                {pdfExportToast && (
+                  <div className="bg-blue-950 border border-blue-700 text-blue-100 text-xs px-4 py-2.5 rounded-lg flex items-center justify-between animate-in fade-in duration-200">
+                    <div className="flex items-center gap-2 font-semibold">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <span>{pdfExportToast}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setPdfExportToast('')}
+                      className="text-blue-300 hover:text-white font-bold ml-2 text-xs"
+                    >
+                      &times;
+                    </button>
+                  </div>
+                )}
+
                 {excelExportToast && (
                   <div className="bg-emerald-50 border border-emerald-300 text-emerald-800 text-xs px-4 py-2.5 rounded-lg flex items-center justify-between animate-in fade-in duration-200">
                     <div className="flex items-center gap-2 font-semibold">
@@ -5182,9 +5418,22 @@ export const AdminView: React.FC = () => {
                   </div>
                 )}
 
-                {/* BARRA DE NAVEGAÇÃO DAS 4 FORMAS DE VER O RELATÓRIO: GERAL, POR SUP, POR DATA, POR COORDE */}
+                {/* BARRA DE NAVEGAÇÃO DAS SUB-VISTAS: EXECUTIVO (8 PONTOS), GERAL, POR SUP, POR DATA, POR COORDE */}
                 <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
                   <div className="inline-flex bg-slate-100 p-1 rounded-xl border border-slate-200 overflow-x-auto">
+                    <button
+                      type="button"
+                      onClick={() => setRelatorioSubView('executivo')}
+                      className={`px-3 sm:px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5 whitespace-nowrap ${
+                        relatorioSubView === 'executivo'
+                          ? 'bg-[#0f172a] text-white shadow-xs ring-1 ring-amber-400/40'
+                          : 'text-slate-700 hover:text-slate-900'
+                      }`}
+                    >
+                      <Sparkles className="w-4 h-4 text-amber-400" />
+                      <span>1. Executivo (8 Pontos • Azul Torrado)</span>
+                    </button>
+
                     <button
                       type="button"
                       onClick={() => setRelatorioSubView('geral')}
@@ -5195,7 +5444,7 @@ export const AdminView: React.FC = () => {
                       }`}
                     >
                       <Layers className="w-4 h-4" />
-                      <span>1. Geral (Consolidado)</span>
+                      <span>2. Geral (Consolidado)</span>
                     </button>
 
                     <button
@@ -5208,7 +5457,7 @@ export const AdminView: React.FC = () => {
                       }`}
                     >
                       <Users className="w-4 h-4" />
-                      <span>2. Por Supervisor</span>
+                      <span>3. Por Supervisor</span>
                     </button>
 
                     <button
@@ -5221,7 +5470,7 @@ export const AdminView: React.FC = () => {
                       }`}
                     >
                       <CalendarDays className="w-4 h-4" />
-                      <span>3. Por Data de Lançamento</span>
+                      <span>4. Por Data de Lançamento</span>
                     </button>
 
                     <button
@@ -5234,7 +5483,7 @@ export const AdminView: React.FC = () => {
                       }`}
                     >
                       <Compass className="w-4 h-4" />
-                      <span>4. Por Coordenação</span>
+                      <span>5. Por Coordenação</span>
                     </button>
                   </div>
 
@@ -5324,7 +5573,900 @@ export const AdminView: React.FC = () => {
               </div>
 
               {/* ============================================================== */}
-              {/* SUB-VISTA 1: RELATÓRIO GERAL (CONSOLIDADO MUNICIPAL) */}
+              {/* SUB-VISTA 1: RELATÓRIO EXECUTIVO ESPECÍFICO (8 PONTOS • AZUL TORRADO) */}
+              {/* ============================================================== */}
+              {relatorioSubView === 'executivo' && (
+                <div className="space-y-6">
+                  {/* 1. PAINEL DE FILTROS: POR SUPERVISOR, POR COORDENAÇÃO, POR DATA */}
+                  <div className="bg-[#0f172a] text-white p-5 rounded-2xl shadow-lg border border-blue-900/40 space-y-4">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-700/70 pb-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-9 h-9 rounded-xl bg-blue-500/20 border border-blue-400/30 flex items-center justify-center text-blue-400">
+                          <Filter className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h4 className="font-black text-white text-base tracking-tight">
+                            Filtros de Pesquisa do Relatório
+                          </h4>
+                          <p className="text-xs text-slate-300">
+                            Filtre instantaneamente por <strong>Supervisor</strong>, por <strong>Coordenação</strong> ou por <strong>Data</strong>
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-mono bg-blue-950 text-blue-200 border border-blue-800/80 px-3 py-1 rounded-lg">
+                          <strong>{submissoesExecutivoFiltradas.length}</strong> {submissoesExecutivoFiltradas.length === 1 ? 'Envio' : 'Envios'} &bull; <strong>{resumoExecutivo.totalFichas}</strong> {resumoExecutivo.totalFichas === 1 ? 'Ficha' : 'Fichas'}
+                        </span>
+                        {(relatorioSupervisorId !== 'todos' || relatorioCoordenacaoId !== 'todas' || relatorioDataFilter !== 'todas' || relatorioExecutivoSearch !== '') && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setRelatorioSupervisorId('todos');
+                              setRelatorioCoordenacaoId('todas');
+                              setRelatorioDataFilter('todas');
+                              setRelatorioExecutivoSearch('');
+                            }}
+                            className="text-xs bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-600 px-2.5 py-1 rounded-lg flex items-center gap-1 transition cursor-pointer"
+                            title="Repor todos os filtros"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5" />
+                            <span>Limpar Filtros</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Controles de Filtro: 4 colunas responsivas */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                      {/* Filtro 1: Supervisor */}
+                      <div>
+                        <label className="block text-xs font-bold text-slate-200 mb-1.5 flex items-center gap-1.5">
+                          <Users className="w-3.5 h-3.5 text-blue-400" />
+                          <span>Por Supervisor</span>
+                        </label>
+                        <select
+                          value={relatorioSupervisorId}
+                          onChange={(e) => setRelatorioSupervisorId(e.target.value)}
+                          className="w-full py-2.5 px-3 text-xs bg-slate-800/90 text-white border border-slate-700 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                        >
+                          <option value="todos">Todos os Supervisores ({supervisores.length})</option>
+                          {supervisores.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.nome} ({s.codigo}) {s.coordenacao ? `• ${s.coordenacao}` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Filtro 2: Coordenação */}
+                      <div>
+                        <label className="block text-xs font-bold text-slate-200 mb-1.5 flex items-center gap-1.5">
+                          <Compass className="w-3.5 h-3.5 text-purple-400" />
+                          <span>Por Coordenação</span>
+                        </label>
+                        <select
+                          value={relatorioCoordenacaoId}
+                          onChange={(e) => setRelatorioCoordenacaoId(e.target.value)}
+                          className="w-full py-2.5 px-3 text-xs bg-slate-800/90 text-white border border-slate-700 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                        >
+                          <option value="todas">Todas as Coordenações ({coordenacoes.length})</option>
+                          {coordenacoes.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.nome}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Filtro 3: Data */}
+                      <div>
+                        <label className="block text-xs font-bold text-slate-200 mb-1.5 flex items-center gap-1.5">
+                          <CalendarDays className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>Por Data</span>
+                        </label>
+                        <select
+                          value={relatorioDataFilter}
+                          onChange={(e) => setRelatorioDataFilter(e.target.value)}
+                          className="w-full py-2.5 px-3 text-xs bg-slate-800/90 text-white border border-slate-700 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                        >
+                          <option value="todas">Todas as Datas</option>
+                          {dailyAnalytics.sortedDates.map((d) => (
+                            <option key={d} value={d}>
+                              {formatarDataPt(d)} {dailyAnalytics.dateLabels[d]?.diaNum ? `(Dia ${dailyAnalytics.dateLabels[d].diaNum})` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Filtro 4: Pesquisa Texto Livre */}
+                      <div>
+                        <label className="block text-xs font-bold text-slate-200 mb-1.5 flex items-center gap-1.5">
+                          <Search className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Pesquisar Bairro / Palavra</span>
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            placeholder="Ex: Kikombo, Chingo, Centro..."
+                            value={relatorioExecutivoSearch}
+                            onChange={(e) => setRelatorioExecutivoSearch(e.target.value)}
+                            className="w-full py-2.5 pl-8 pr-3 text-xs bg-slate-800/90 text-white placeholder-slate-400 border border-slate-700 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                          />
+                          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-3" />
+                          {relatorioExecutivoSearch && (
+                            <button
+                              type="button"
+                              onClick={() => setRelatorioExecutivoSearch('')}
+                              className="absolute right-2.5 top-2.5 text-slate-400 hover:text-white text-xs font-bold"
+                            >
+                              &times;
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Botões de Ação Imediata no Relatório */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800">
+                      <div className="text-xs text-slate-300 flex items-center gap-2">
+                        <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                        <span>
+                          Os dados e totais abaixo correspondem estritamente aos filtros ativos.
+                        </span>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handleExportPDF}
+                          disabled={isExportingPdf}
+                          className="bg-gradient-to-r from-blue-700 to-indigo-800 hover:from-blue-600 hover:to-indigo-700 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-2 shadow-md transition cursor-pointer border border-blue-400/40"
+                          title="Descarregar relatório oficial com cabeçalho governamental em PDF (.pdf)"
+                        >
+                          <FileDown className="w-4 h-4 text-amber-300" />
+                          <span>{isExportingPdf ? 'A Gerar PDF...' : 'Exportar PDF Oficial (.pdf)'}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={handleExportExcelRelatorio}
+                          disabled={isExportingExcel}
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-2 shadow-md transition cursor-pointer"
+                          title="Descarregar folha de cálculo Excel (.xlsx) com estes dados filtrados"
+                        >
+                          <FileSpreadsheet className="w-4 h-4" />
+                          <span>{isExportingExcel ? 'A Gerar Excel...' : 'Exportar Excel (.xlsx)'}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => window.print()}
+                          className="bg-slate-700 hover:bg-slate-600 text-white font-semibold px-3 py-2 rounded-xl text-xs flex items-center gap-1.5 transition cursor-pointer"
+                        >
+                          <Printer className="w-4 h-4" />
+                          <span>Imprimir</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 2. CABEÇALHO GOVERNAMENTAL EM AZUL TORRADO */}
+                  <div className="bg-gradient-to-r from-[#0f172a] via-[#1e3a8a] to-[#0f172a] rounded-2xl p-5 text-white shadow-md border-b-4 border-amber-500 space-y-4">
+                    <div className="text-center space-y-1">
+                      <div className="text-[11px] font-bold text-amber-300 tracking-wider uppercase">
+                        REPÚBLICA DE ANGOLA &bull; GOVERNO DA PROVÍNCIA DO CUANZA SUL
+                      </div>
+                      <h3 className="text-lg sm:text-xl font-black text-white tracking-tight">
+                        ADMINISTRAÇÃO MUNICIPAL DO SUMBE &bull; RELATÓRIO ESPECÍFICO DE MOBILIZAÇÃO SOCIAL
+                      </h3>
+                      <p className="text-xs text-slate-300 max-w-2xl mx-auto">
+                        Campanha de Vacinação Contra a Poliomielite &bull; Apresentação discriminada das <strong>8 Categorias da Ficha</strong> com locais e pessoas.
+                      </p>
+                    </div>
+
+                    {/* Barra de KPIs Resumo em Azul Torrado */}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 pt-2">
+                      <div className="bg-slate-900/80 p-3 rounded-xl border border-blue-900/50">
+                        <span className="text-[10px] text-blue-300 uppercase font-bold tracking-wider block">Fichas Lançadas</span>
+                        <div className="text-xl sm:text-2xl font-black text-white mt-0.5">
+                          {resumoExecutivo.totalFichas}
+                        </div>
+                        <span className="text-[10px] text-slate-400">{submissoesExecutivoFiltradas.length} envios</span>
+                      </div>
+
+                      <div className="bg-slate-900/80 p-3 rounded-xl border border-blue-900/50">
+                        <span className="text-[10px] text-emerald-300 uppercase font-bold tracking-wider block">Locais Cobertos</span>
+                        <div className="text-xl sm:text-2xl font-black text-emerald-400 mt-0.5">
+                          {resumoExecutivo.totalLocais.toLocaleString('pt-PT')}
+                        </div>
+                        <span className="text-[10px] text-slate-400">Total somado das 8 categorias</span>
+                      </div>
+
+                      <div className="bg-slate-900/80 p-3 rounded-xl border border-blue-900/50">
+                        <span className="text-[10px] text-sky-300 uppercase font-bold tracking-wider block">Pessoas Mobilizadas</span>
+                        <div className="text-xl sm:text-2xl font-black text-sky-400 mt-0.5">
+                          {resumoExecutivo.totalPessoas.toLocaleString('pt-PT')}
+                        </div>
+                        <span className="text-[10px] text-slate-400">Total somado das 8 categorias</span>
+                      </div>
+
+                      <div className="bg-slate-900/80 p-3 rounded-xl border border-blue-900/50">
+                        <span className="text-[10px] text-emerald-300 uppercase font-bold tracking-wider block">Mobilizados (Sim)</span>
+                        <div className="text-xl sm:text-2xl font-black text-emerald-400 mt-0.5">
+                          {resumoExecutivo.totalSim.toLocaleString('pt-PT')}
+                        </div>
+                        <span className="text-[10px] text-emerald-300 font-bold">{resumoExecutivo.taxaAdesao}% de adesão</span>
+                      </div>
+
+                      <div className="bg-slate-900/80 p-3 rounded-xl border border-blue-900/50 col-span-2 sm:col-span-1">
+                        <span className="text-[10px] text-rose-300 uppercase font-bold tracking-wider block">Recusas (Não)</span>
+                        <div className="text-xl sm:text-2xl font-black text-rose-400 mt-0.5">
+                          {resumoExecutivo.totalNao.toLocaleString('pt-PT')}
+                        </div>
+                        <span className="text-[10px] text-slate-400">Pessoas que recusaram</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 3. AS 8 CATEGORIAS COM CORES DIFERENTES E FORMATO ESPECÍFICO */}
+                  <div>
+                    <div className="flex items-center justify-between mb-3">
+                      <div>
+                        <h4 className="font-black text-slate-900 text-base">
+                          Distribuição Específica por Ponto de Mobilização (As 8 Categorias)
+                        </h4>
+                        <p className="text-xs text-slate-500">
+                          Cada ponto possui uma cor exclusiva para visualização clara, rápida e sem confusão.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                      {/* PONTO 1: CASA A CASA */}
+                      <div className="bg-gradient-to-br from-blue-50 to-blue-100/60 border-2 border-blue-400/80 rounded-2xl p-4 shadow-xs hover:shadow-md transition">
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-xs">
+                              <Home className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider block">Ponto 1</span>
+                              <h5 className="font-extrabold text-blue-950 text-sm">Casa a casa</h5>
+                            </div>
+                          </div>
+                          <span className="bg-blue-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-xs">
+                            Residências
+                          </span>
+                        </div>
+
+                        <p className="text-[11px] text-blue-800/80 mb-3">
+                          Visitas domiciliares de porta em porta nas comunidades
+                        </p>
+
+                        <div className="bg-white/90 rounded-xl p-3 border border-blue-200 space-y-2">
+                          <div className="flex items-center justify-between pb-1.5 border-b border-blue-100">
+                            <span className="text-xs font-semibold text-slate-600">Casa a casa - locais:</span>
+                            <span className="text-base font-black text-blue-950 font-mono">
+                              {totais8Pontos.casa.locais.toLocaleString('pt-PT')}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-semibold text-slate-600">Casa a casa - pessoas:</span>
+                            <span className="text-base font-black text-blue-600 font-mono">
+                              {totais8Pontos.casa.pessoas.toLocaleString('pt-PT')}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* PONTO 2: IGREJAS */}
+                      <div className="bg-gradient-to-br from-purple-50 to-purple-100/60 border-2 border-purple-400/80 rounded-2xl p-4 shadow-xs hover:shadow-md transition">
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-lg bg-purple-600 text-white flex items-center justify-center shadow-xs">
+                              <Church className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-bold text-purple-700 uppercase tracking-wider block">Ponto 2</span>
+                              <h5 className="font-extrabold text-purple-950 text-sm">Igrejas</h5>
+                            </div>
+                          </div>
+                          <span className="bg-purple-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-xs">
+                            Religioso
+                          </span>
+                        </div>
+
+                        <p className="text-[11px] text-purple-800/80 mb-3">
+                          Templos, paróquias, congregações e cultos
+                        </p>
+
+                        <div className="bg-white/90 rounded-xl p-3 border border-purple-200 space-y-2">
+                          <div className="flex items-center justify-between pb-1.5 border-b border-purple-100">
+                            <span className="text-xs font-semibold text-slate-600">Igrejas - locais:</span>
+                            <span className="text-base font-black text-purple-950 font-mono">
+                              {totais8Pontos.igrejas.locais.toLocaleString('pt-PT')}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-semibold text-slate-600">Igrejas - pessoas:</span>
+                            <span className="text-base font-black text-purple-600 font-mono">
+                              {totais8Pontos.igrejas.pessoas.toLocaleString('pt-PT')}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* PONTO 3: PRAÇAS / MERCADOS */}
+                      <div className="bg-gradient-to-br from-amber-50 to-amber-100/60 border-2 border-amber-400/80 rounded-2xl p-4 shadow-xs hover:shadow-md transition">
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-lg bg-amber-600 text-white flex items-center justify-center shadow-xs">
+                              <ShoppingBag className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-bold text-amber-700 uppercase tracking-wider block">Ponto 3</span>
+                              <h5 className="font-extrabold text-amber-950 text-sm">Praças / Mercados</h5>
+                            </div>
+                          </div>
+                          <span className="bg-amber-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-xs">
+                            Comércio
+                          </span>
+                        </div>
+
+                        <p className="text-[11px] text-amber-800/80 mb-3">
+                          Mercados municipais, feiras e praças públicas
+                        </p>
+
+                        <div className="bg-white/90 rounded-xl p-3 border border-amber-200 space-y-2">
+                          <div className="flex items-center justify-between pb-1.5 border-b border-amber-100">
+                            <span className="text-xs font-semibold text-slate-600">Praças/Mercados - locais:</span>
+                            <span className="text-base font-black text-amber-950 font-mono">
+                              {totais8Pontos.pracas.locais.toLocaleString('pt-PT')}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-semibold text-slate-600">Praças/Mercados - pessoas:</span>
+                            <span className="text-base font-black text-amber-600 font-mono">
+                              {totais8Pontos.pracas.pessoas.toLocaleString('pt-PT')}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* PONTO 4: PARAGEM DE TÁXI */}
+                      <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/60 border-2 border-emerald-400/80 rounded-2xl p-4 shadow-xs hover:shadow-md transition">
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center shadow-xs">
+                              <Car className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block">Ponto 4</span>
+                              <h5 className="font-extrabold text-emerald-950 text-sm">Paragem de táxi</h5>
+                            </div>
+                          </div>
+                          <span className="bg-emerald-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-xs">
+                            Transporte
+                          </span>
+                        </div>
+
+                        <p className="text-[11px] text-emerald-800/80 mb-3">
+                          Terminais de táxis, mototáxis e paragens
+                        </p>
+
+                        <div className="bg-white/90 rounded-xl p-3 border border-emerald-200 space-y-2">
+                          <div className="flex items-center justify-between pb-1.5 border-b border-emerald-100">
+                            <span className="text-xs font-semibold text-slate-600">Paragem de taxi - locais:</span>
+                            <span className="text-base font-black text-emerald-950 font-mono">
+                              {totais8Pontos.paragem.locais.toLocaleString('pt-PT')}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-semibold text-slate-600">Paragem de taxi - pessoas:</span>
+                            <span className="text-base font-black text-emerald-600 font-mono">
+                              {totais8Pontos.paragem.pessoas.toLocaleString('pt-PT')}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* PONTO 5: CRECHES */}
+                      <div className="bg-gradient-to-br from-rose-50 to-rose-100/60 border-2 border-rose-400/80 rounded-2xl p-4 shadow-xs hover:shadow-md transition">
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-lg bg-rose-600 text-white flex items-center justify-center shadow-xs">
+                              <Baby className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-bold text-rose-700 uppercase tracking-wider block">Ponto 5</span>
+                              <h5 className="font-extrabold text-rose-950 text-sm">Creches</h5>
+                            </div>
+                          </div>
+                          <span className="bg-rose-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-xs">
+                            Infantil
+                          </span>
+                        </div>
+
+                        <p className="text-[11px] text-rose-800/80 mb-3">
+                          Centros infantis, infantários e berçários
+                        </p>
+
+                        <div className="bg-white/90 rounded-xl p-3 border border-rose-200 space-y-2">
+                          <div className="flex items-center justify-between pb-1.5 border-b border-rose-100">
+                            <span className="text-xs font-semibold text-slate-600">Creches - locais:</span>
+                            <span className="text-base font-black text-rose-950 font-mono">
+                              {totais8Pontos.creches.locais.toLocaleString('pt-PT')}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-semibold text-slate-600">Creches - pessoas:</span>
+                            <span className="text-base font-black text-rose-600 font-mono">
+                              {totais8Pontos.creches.pessoas.toLocaleString('pt-PT')}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* PONTO 6: ESCOLAS */}
+                      <div className="bg-gradient-to-br from-sky-50 to-sky-100/60 border-2 border-sky-400/80 rounded-2xl p-4 shadow-xs hover:shadow-md transition">
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-lg bg-sky-600 text-white flex items-center justify-center shadow-xs">
+                              <GraduationCap className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-bold text-sky-700 uppercase tracking-wider block">Ponto 6</span>
+                              <h5 className="font-extrabold text-sky-950 text-sm">Escolas</h5>
+                            </div>
+                          </div>
+                          <span className="bg-sky-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-xs">
+                            Ensino
+                          </span>
+                        </div>
+
+                        <p className="text-[11px] text-sky-800/80 mb-3">
+                          Colégios, escolas primárias e secundárias
+                        </p>
+
+                        <div className="bg-white/90 rounded-xl p-3 border border-sky-200 space-y-2">
+                          <div className="flex items-center justify-between pb-1.5 border-b border-sky-100">
+                            <span className="text-xs font-semibold text-slate-600">Escolas - locais:</span>
+                            <span className="text-base font-black text-sky-950 font-mono">
+                              {totais8Pontos.escolas.locais.toLocaleString('pt-PT')}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-semibold text-slate-600">Escolas - pessoas:</span>
+                            <span className="text-base font-black text-sky-600 font-mono">
+                              {totais8Pontos.escolas.pessoas.toLocaleString('pt-PT')}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* PONTO 7: PONTO DE ÁGUA */}
+                      <div className="bg-gradient-to-br from-teal-50 to-teal-100/60 border-2 border-teal-400/80 rounded-2xl p-4 shadow-xs hover:shadow-md transition">
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-lg bg-teal-600 text-white flex items-center justify-center shadow-xs">
+                              <Droplets className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-bold text-teal-700 uppercase tracking-wider block">Ponto 7</span>
+                              <h5 className="font-extrabold text-teal-950 text-sm">Ponto de água</h5>
+                            </div>
+                          </div>
+                          <span className="bg-teal-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-xs">
+                            Comunitário
+                          </span>
+                        </div>
+
+                        <p className="text-[11px] text-teal-800/80 mb-3">
+                          Chafarizes, fontanários públicos e cacimbas
+                        </p>
+
+                        <div className="bg-white/90 rounded-xl p-3 border border-teal-200 space-y-2">
+                          <div className="flex items-center justify-between pb-1.5 border-b border-teal-100">
+                            <span className="text-xs font-semibold text-slate-600">Ponto de água - locais:</span>
+                            <span className="text-base font-black text-teal-950 font-mono">
+                              {totais8Pontos.agua.locais.toLocaleString('pt-PT')}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-semibold text-slate-600">Ponto de água - pessoas:</span>
+                            <span className="text-base font-black text-teal-600 font-mono">
+                              {totais8Pontos.agua.pessoas.toLocaleString('pt-PT')}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* PONTO 8: OUTROS */}
+                      <div className="bg-gradient-to-br from-slate-100 to-indigo-50 border-2 border-slate-400/80 rounded-2xl p-4 shadow-xs hover:shadow-md transition">
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-lg bg-slate-800 text-white flex items-center justify-center shadow-xs">
+                              <MoreHorizontal className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <span className="text-[10px] font-bold text-slate-700 uppercase tracking-wider block">Ponto 8</span>
+                              <h5 className="font-extrabold text-slate-900 text-sm">Outros</h5>
+                            </div>
+                          </div>
+                          <span className="bg-slate-700 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-xs">
+                            Diversos
+                          </span>
+                        </div>
+
+                        <p className="text-[11px] text-slate-700/80 mb-3">
+                          Outros locais públicos e aglomerações sociais
+                        </p>
+
+                        <div className="bg-white/90 rounded-xl p-3 border border-slate-300 space-y-2">
+                          <div className="flex items-center justify-between pb-1.5 border-b border-slate-200">
+                            <span className="text-xs font-semibold text-slate-600">Outros - locais:</span>
+                            <span className="text-base font-black text-slate-950 font-mono">
+                              {totais8Pontos.outros.locais.toLocaleString('pt-PT')}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-semibold text-slate-600">Outros - pessoas:</span>
+                            <span className="text-base font-black text-slate-800 font-mono">
+                              {totais8Pontos.outros.pessoas.toLocaleString('pt-PT')}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 4. QUADRO TABELAR CONSOLIDADO DOS 8 PONTOS */}
+                  <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+                    <div className="bg-[#0f172a] text-white p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <h4 className="font-bold text-white text-sm flex items-center gap-2">
+                          <span>Quadro Comparativo Oficial das 8 Categorias</span>
+                        </h4>
+                        <p className="text-[11px] text-slate-300">
+                          Resumo discriminado de Locais Cobertos e Pessoas Sensibilizadas
+                        </p>
+                      </div>
+                      <div className="text-xs text-amber-300 font-mono font-bold bg-blue-950/90 px-3 py-1 rounded-lg border border-blue-900">
+                        Total: {resumoExecutivo.totalLocais.toLocaleString('pt-PT')} Locais &bull; {resumoExecutivo.totalPessoas.toLocaleString('pt-PT')} Pessoas
+                      </div>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-100 text-slate-700 font-bold uppercase tracking-wider border-b border-slate-200">
+                          <tr>
+                            <th className="py-3 px-4">Ponto de Mobilização</th>
+                            <th className="py-3 px-4 text-center">Locais Visitados</th>
+                            <th className="py-3 px-4 text-center">Pessoas Mobilizadas</th>
+                            <th className="py-3 px-4 text-center">% do Total Pessoas</th>
+                            <th className="py-3 px-4 text-center">Média Pessoas / Local</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
+                          <tr className="hover:bg-blue-50/50">
+                            <td className="py-3 px-4 flex items-center gap-2 font-bold text-blue-950">
+                              <span className="w-2.5 h-2.5 rounded-full bg-blue-600 inline-block"></span>
+                              <span>1. Casa a casa</span>
+                            </td>
+                            <td className="py-3 px-4 text-center font-bold text-blue-950 font-mono">
+                              {totais8Pontos.casa.locais.toLocaleString('pt-PT')}
+                            </td>
+                            <td className="py-3 px-4 text-center font-bold text-blue-600 font-mono">
+                              {totais8Pontos.casa.pessoas.toLocaleString('pt-PT')}
+                            </td>
+                            <td className="py-3 px-4 text-center font-mono">
+                              {resumoExecutivo.totalPessoas > 0 ? ((totais8Pontos.casa.pessoas / resumoExecutivo.totalPessoas) * 100).toFixed(1) : '0.0'}%
+                            </td>
+                            <td className="py-3 px-4 text-center font-mono text-slate-500">
+                              {totais8Pontos.casa.locais > 0 ? (totais8Pontos.casa.pessoas / totais8Pontos.casa.locais).toFixed(1) : '0.0'}
+                            </td>
+                          </tr>
+
+                          <tr className="hover:bg-purple-50/50">
+                            <td className="py-3 px-4 flex items-center gap-2 font-bold text-purple-950">
+                              <span className="w-2.5 h-2.5 rounded-full bg-purple-600 inline-block"></span>
+                              <span>2. Igrejas</span>
+                            </td>
+                            <td className="py-3 px-4 text-center font-bold text-purple-950 font-mono">
+                              {totais8Pontos.igrejas.locais.toLocaleString('pt-PT')}
+                            </td>
+                            <td className="py-3 px-4 text-center font-bold text-purple-600 font-mono">
+                              {totais8Pontos.igrejas.pessoas.toLocaleString('pt-PT')}
+                            </td>
+                            <td className="py-3 px-4 text-center font-mono">
+                              {resumoExecutivo.totalPessoas > 0 ? ((totais8Pontos.igrejas.pessoas / resumoExecutivo.totalPessoas) * 100).toFixed(1) : '0.0'}%
+                            </td>
+                            <td className="py-3 px-4 text-center font-mono text-slate-500">
+                              {totais8Pontos.igrejas.locais > 0 ? (totais8Pontos.igrejas.pessoas / totais8Pontos.igrejas.locais).toFixed(1) : '0.0'}
+                            </td>
+                          </tr>
+
+                          <tr className="hover:bg-amber-50/50">
+                            <td className="py-3 px-4 flex items-center gap-2 font-bold text-amber-950">
+                              <span className="w-2.5 h-2.5 rounded-full bg-amber-600 inline-block"></span>
+                              <span>3. Praças / Mercados</span>
+                            </td>
+                            <td className="py-3 px-4 text-center font-bold text-amber-950 font-mono">
+                              {totais8Pontos.pracas.locais.toLocaleString('pt-PT')}
+                            </td>
+                            <td className="py-3 px-4 text-center font-bold text-amber-600 font-mono">
+                              {totais8Pontos.pracas.pessoas.toLocaleString('pt-PT')}
+                            </td>
+                            <td className="py-3 px-4 text-center font-mono">
+                              {resumoExecutivo.totalPessoas > 0 ? ((totais8Pontos.pracas.pessoas / resumoExecutivo.totalPessoas) * 100).toFixed(1) : '0.0'}%
+                            </td>
+                            <td className="py-3 px-4 text-center font-mono text-slate-500">
+                              {totais8Pontos.pracas.locais > 0 ? (totais8Pontos.pracas.pessoas / totais8Pontos.pracas.locais).toFixed(1) : '0.0'}
+                            </td>
+                          </tr>
+
+                          <tr className="hover:bg-emerald-50/50">
+                            <td className="py-3 px-4 flex items-center gap-2 font-bold text-emerald-950">
+                              <span className="w-2.5 h-2.5 rounded-full bg-emerald-600 inline-block"></span>
+                              <span>4. Paragem de táxi</span>
+                            </td>
+                            <td className="py-3 px-4 text-center font-bold text-emerald-950 font-mono">
+                              {totais8Pontos.paragem.locais.toLocaleString('pt-PT')}
+                            </td>
+                            <td className="py-3 px-4 text-center font-bold text-emerald-600 font-mono">
+                              {totais8Pontos.paragem.pessoas.toLocaleString('pt-PT')}
+                            </td>
+                            <td className="py-3 px-4 text-center font-mono">
+                              {resumoExecutivo.totalPessoas > 0 ? ((totais8Pontos.paragem.pessoas / resumoExecutivo.totalPessoas) * 100).toFixed(1) : '0.0'}%
+                            </td>
+                            <td className="py-3 px-4 text-center font-mono text-slate-500">
+                              {totais8Pontos.paragem.locais > 0 ? (totais8Pontos.paragem.pessoas / totais8Pontos.paragem.locais).toFixed(1) : '0.0'}
+                            </td>
+                          </tr>
+
+                          <tr className="hover:bg-rose-50/50">
+                            <td className="py-3 px-4 flex items-center gap-2 font-bold text-rose-950">
+                              <span className="w-2.5 h-2.5 rounded-full bg-rose-600 inline-block"></span>
+                              <span>5. Creches</span>
+                            </td>
+                            <td className="py-3 px-4 text-center font-bold text-rose-950 font-mono">
+                              {totais8Pontos.creches.locais.toLocaleString('pt-PT')}
+                            </td>
+                            <td className="py-3 px-4 text-center font-bold text-rose-600 font-mono">
+                              {totais8Pontos.creches.pessoas.toLocaleString('pt-PT')}
+                            </td>
+                            <td className="py-3 px-4 text-center font-mono">
+                              {resumoExecutivo.totalPessoas > 0 ? ((totais8Pontos.creches.pessoas / resumoExecutivo.totalPessoas) * 100).toFixed(1) : '0.0'}%
+                            </td>
+                            <td className="py-3 px-4 text-center font-mono text-slate-500">
+                              {totais8Pontos.creches.locais > 0 ? (totais8Pontos.creches.pessoas / totais8Pontos.creches.locais).toFixed(1) : '0.0'}
+                            </td>
+                          </tr>
+
+                          <tr className="hover:bg-sky-50/50">
+                            <td className="py-3 px-4 flex items-center gap-2 font-bold text-sky-950">
+                              <span className="w-2.5 h-2.5 rounded-full bg-sky-600 inline-block"></span>
+                              <span>6. Escolas</span>
+                            </td>
+                            <td className="py-3 px-4 text-center font-bold text-sky-950 font-mono">
+                              {totais8Pontos.escolas.locais.toLocaleString('pt-PT')}
+                            </td>
+                            <td className="py-3 px-4 text-center font-bold text-sky-600 font-mono">
+                              {totais8Pontos.escolas.pessoas.toLocaleString('pt-PT')}
+                            </td>
+                            <td className="py-3 px-4 text-center font-mono">
+                              {resumoExecutivo.totalPessoas > 0 ? ((totais8Pontos.escolas.pessoas / resumoExecutivo.totalPessoas) * 100).toFixed(1) : '0.0'}%
+                            </td>
+                            <td className="py-3 px-4 text-center font-mono text-slate-500">
+                              {totais8Pontos.escolas.locais > 0 ? (totais8Pontos.escolas.pessoas / totais8Pontos.escolas.locais).toFixed(1) : '0.0'}
+                            </td>
+                          </tr>
+
+                          <tr className="hover:bg-teal-50/50">
+                            <td className="py-3 px-4 flex items-center gap-2 font-bold text-teal-950">
+                              <span className="w-2.5 h-2.5 rounded-full bg-teal-600 inline-block"></span>
+                              <span>7. Ponto de água</span>
+                            </td>
+                            <td className="py-3 px-4 text-center font-bold text-teal-950 font-mono">
+                              {totais8Pontos.agua.locais.toLocaleString('pt-PT')}
+                            </td>
+                            <td className="py-3 px-4 text-center font-bold text-teal-600 font-mono">
+                              {totais8Pontos.agua.pessoas.toLocaleString('pt-PT')}
+                            </td>
+                            <td className="py-3 px-4 text-center font-mono">
+                              {resumoExecutivo.totalPessoas > 0 ? ((totais8Pontos.agua.pessoas / resumoExecutivo.totalPessoas) * 100).toFixed(1) : '0.0'}%
+                            </td>
+                            <td className="py-3 px-4 text-center font-mono text-slate-500">
+                              {totais8Pontos.agua.locais > 0 ? (totais8Pontos.agua.pessoas / totais8Pontos.agua.locais).toFixed(1) : '0.0'}
+                            </td>
+                          </tr>
+
+                          <tr className="hover:bg-slate-50">
+                            <td className="py-3 px-4 flex items-center gap-2 font-bold text-slate-900">
+                              <span className="w-2.5 h-2.5 rounded-full bg-slate-700 inline-block"></span>
+                              <span>8. Outros</span>
+                            </td>
+                            <td className="py-3 px-4 text-center font-bold text-slate-950 font-mono">
+                              {totais8Pontos.outros.locais.toLocaleString('pt-PT')}
+                            </td>
+                            <td className="py-3 px-4 text-center font-bold text-slate-700 font-mono">
+                              {totais8Pontos.outros.pessoas.toLocaleString('pt-PT')}
+                            </td>
+                            <td className="py-3 px-4 text-center font-mono">
+                              {resumoExecutivo.totalPessoas > 0 ? ((totais8Pontos.outros.pessoas / resumoExecutivo.totalPessoas) * 100).toFixed(1) : '0.0'}%
+                            </td>
+                            <td className="py-3 px-4 text-center font-mono text-slate-500">
+                              {totais8Pontos.outros.locais > 0 ? (totais8Pontos.outros.pessoas / totais8Pontos.outros.locais).toFixed(1) : '0.0'}
+                            </td>
+                          </tr>
+                        </tbody>
+                        <tfoot className="bg-slate-100 font-bold text-slate-900 border-t-2 border-slate-300">
+                          <tr>
+                            <td className="py-3.5 px-4 text-right">TOTAL GERAL CONSOLIDADO:</td>
+                            <td className="py-3.5 px-4 text-center text-blue-900 font-black font-mono text-sm">
+                              {resumoExecutivo.totalLocais.toLocaleString('pt-PT')} locais
+                            </td>
+                            <td className="py-3.5 px-4 text-center text-blue-700 font-black font-mono text-sm">
+                              {resumoExecutivo.totalPessoas.toLocaleString('pt-PT')} pessoas
+                            </td>
+                            <td className="py-3.5 px-4 text-center font-mono">100.0%</td>
+                            <td className="py-3.5 px-4 text-center font-mono text-slate-600">
+                              {resumoExecutivo.totalLocais > 0 ? (resumoExecutivo.totalPessoas / resumoExecutivo.totalLocais).toFixed(1) : '0.0'}
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* 5. LISTA DE FICHAS FILTRADAS */}
+                  <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+                    <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <h4 className="font-bold text-slate-800 text-sm">
+                          Submissões Filtradas ({submissoesExecutivoFiltradas.length} Envios)
+                        </h4>
+                        <p className="text-[11px] text-slate-500">
+                          Detalhamento ficha a ficha conforme dados lançados pelos supervisores no terreno
+                        </p>
+                      </div>
+                    </div>
+
+                    {submissoesExecutivoFiltradas.length === 0 ? (
+                      <div className="p-8 text-center text-slate-500 space-y-2">
+                        <AlertCircle className="w-8 h-8 text-slate-400 mx-auto" />
+                        <p className="text-sm font-semibold">Nenhuma ficha corresponde aos filtros selecionados.</p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRelatorioSupervisorId('todos');
+                            setRelatorioCoordenacaoId('todas');
+                            setRelatorioDataFilter('todas');
+                            setRelatorioExecutivoSearch('');
+                          }}
+                          className="text-xs text-blue-600 font-bold hover:underline"
+                        >
+                          Limpar filtros para ver todos os dados
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead className="bg-slate-100 text-slate-600 font-semibold uppercase tracking-wider border-b border-slate-200">
+                            <tr>
+                              <th className="py-3 px-3">Data</th>
+                              <th className="py-3 px-3">Supervisor</th>
+                              <th className="py-3 px-3">Bairro</th>
+                              <th className="py-3 px-2 text-center text-blue-700">1. Casas (L/P)</th>
+                              <th className="py-3 px-2 text-center text-purple-700">2. Igrejas (L/P)</th>
+                              <th className="py-3 px-2 text-center text-amber-700">3. Praças (L/P)</th>
+                              <th className="py-3 px-2 text-center text-emerald-700">4. Paragens (L/P)</th>
+                              <th className="py-3 px-2 text-center text-rose-700">5. Creches (L/P)</th>
+                              <th className="py-3 px-2 text-center text-sky-700">6. Escolas (L/P)</th>
+                              <th className="py-3 px-2 text-center text-teal-700">7. Água (L/P)</th>
+                              <th className="py-3 px-2 text-center text-slate-700">8. Outros (L/P)</th>
+                              <th className="py-3 px-2 text-center font-bold">Total L.</th>
+                              <th className="py-3 px-2 text-center font-bold">Total P.</th>
+                              <th className="py-3 px-2 text-center text-emerald-600 font-bold">Sim</th>
+                              <th className="py-3 px-2 text-center text-rose-600 font-bold">Não</th>
+                              <th className="py-3 px-3 text-right">Ações</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                            {submissoesExecutivoFiltradas.map((sub) => {
+                              return (sub.fichas || []).map((f, idx) => {
+                                const locFicha =
+                                  (f.casa_locais || 0) +
+                                  (f.igrejas_locais || 0) +
+                                  (f.pracas_locais || 0) +
+                                  (f.paragem_locais || 0) +
+                                  (f.creches_locais || 0) +
+                                  (f.escolas_locais || 0) +
+                                  (f.agua_locais || 0) +
+                                  (f.outros_locais || 0);
+
+                                const pessFicha =
+                                  (f.casa_pessoas || 0) +
+                                  (f.igrejas_pessoas || 0) +
+                                  (f.pracas_pessoas || 0) +
+                                  (f.paragem_pessoas || 0) +
+                                  (f.creches_pessoas || 0) +
+                                  (f.escolas_pessoas || 0) +
+                                  (f.agua_pessoas || 0) +
+                                  (f.outros_pessoas || 0);
+
+                                return (
+                                  <tr key={`${sub.id}_${f.id || idx}`} className="hover:bg-slate-50 transition">
+                                    <td className="py-2.5 px-3 font-mono text-[11px] whitespace-nowrap">
+                                      {formatarDataPt(sub.dataEnvio || sub.data)}
+                                    </td>
+                                    <td className="py-2.5 px-3">
+                                      <div className="font-bold text-slate-900">{sub.supervisorNome}</div>
+                                      <div className="text-[10px] text-slate-400">Ficha #{f.numeroFicha || idx + 1}</div>
+                                    </td>
+                                    <td className="py-2.5 px-3">
+                                      <span className="font-semibold text-slate-800">{f.bairro || 'Sem Bairro'}</span>
+                                    </td>
+                                    <td className="py-2.5 px-2 text-center font-mono text-blue-900 bg-blue-50/30">
+                                      {f.casa_locais || 0} / <strong>{f.casa_pessoas || 0}</strong>
+                                    </td>
+                                    <td className="py-2.5 px-2 text-center font-mono text-purple-900 bg-purple-50/30">
+                                      {f.igrejas_locais || 0} / <strong>{f.igrejas_pessoas || 0}</strong>
+                                    </td>
+                                    <td className="py-2.5 px-2 text-center font-mono text-amber-900 bg-amber-50/30">
+                                      {f.pracas_locais || 0} / <strong>{f.pracas_pessoas || 0}</strong>
+                                    </td>
+                                    <td className="py-2.5 px-2 text-center font-mono text-emerald-900 bg-emerald-50/30">
+                                      {f.paragem_locais || 0} / <strong>{f.paragem_pessoas || 0}</strong>
+                                    </td>
+                                    <td className="py-2.5 px-2 text-center font-mono text-rose-900 bg-rose-50/30">
+                                      {f.creches_locais || 0} / <strong>{f.creches_pessoas || 0}</strong>
+                                    </td>
+                                    <td className="py-2.5 px-2 text-center font-mono text-sky-900 bg-sky-50/30">
+                                      {f.escolas_locais || 0} / <strong>{f.escolas_pessoas || 0}</strong>
+                                    </td>
+                                    <td className="py-2.5 px-2 text-center font-mono text-teal-900 bg-teal-50/30">
+                                      {f.agua_locais || 0} / <strong>{f.agua_pessoas || 0}</strong>
+                                    </td>
+                                    <td className="py-2.5 px-2 text-center font-mono text-slate-800 bg-slate-50">
+                                      {f.outros_locais || 0} / <strong>{f.outros_pessoas || 0}</strong>
+                                    </td>
+                                    <td className="py-2.5 px-2 text-center font-mono font-bold text-slate-900">
+                                      {locFicha}
+                                    </td>
+                                    <td className="py-2.5 px-2 text-center font-mono font-bold text-blue-700">
+                                      {pessFicha}
+                                    </td>
+                                    <td className="py-2.5 px-2 text-center font-mono text-emerald-700 font-bold">
+                                      {f.total_sim || 0}
+                                    </td>
+                                    <td className="py-2.5 px-2 text-center font-mono text-rose-600 font-bold">
+                                      {f.total_nao || 0}
+                                    </td>
+                                    <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                                      <button
+                                        type="button"
+                                        onClick={() => setSelectedSubmission(sub)}
+                                        className="text-[#2667ff] hover:text-[#1a53db] font-bold text-[11px] underline cursor-pointer"
+                                      >
+                                        Ver Envio
+                                      </button>
+                                    </td>
+                                  </tr>
+                                );
+                              });
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* ============================================================== */}
+              {/* SUB-VISTA 2: RELATÓRIO GERAL (CONSOLIDADO MUNICIPAL) */}
               {/* ============================================================== */}
               {relatorioSubView === 'geral' && (
                 <div className="space-y-6">
@@ -6994,15 +8136,33 @@ export const AdminView: React.FC = () => {
                 <div className="space-y-1.5">
                   <select
                     value={newSupCoordenacao}
-                    onChange={(e) => setNewSupCoordenacao(e.target.value)}
+                    onChange={(e) => {
+                      const coordNome = e.target.value;
+                      setNewSupCoordenacao(coordNome);
+                      const found = coordenacoes.find((c) => c.nome === coordNome);
+                      if (found) {
+                        const dias = found.diasTrabalho || 5;
+                        const mob = found.totalMobilizadores || 10;
+                        const porMob = found.fichasDiariasPorMobilizador || 5;
+                        const totalDiario = mob * porMob;
+                        const totalCoord = found.metaFichasTotal || (totalDiario * dias);
+                        const vagasTotais = 2;
+                        const cota = Math.round(totalCoord / vagasTotais);
+                        const cotaDiaria = Math.max(1, Math.round(totalDiario / vagasTotais));
+                        setNewSupDiasTrabalho(dias);
+                        setNewSupTotalFichas(cota);
+                        setNewSupFichasDiarias(cotaDiaria);
+                      }
+                    }}
                     className="w-full text-sm font-semibold py-2 px-3 border border-slate-300 rounded-lg bg-white"
                   >
                     <option value="">Selecione uma coordenação registada...</option>
                     {coordenacoes.map((c) => {
                       const vagas = 2 - (c.supervisorIds?.length || 0);
+                      const mob = c.totalMobilizadores || 10;
                       return (
                         <option key={c.id} value={c.nome}>
-                          {c.nome} {vagas > 0 ? `(${vagas} vaga${vagas > 1 ? 's' : ''})` : '(Lotação completa)'}
+                          {c.nome} &bull; {mob} mob. &bull; {vagas > 0 ? `${vagas} vaga(s)` : 'Lotação completa'}
                         </option>
                       );
                     })}
@@ -7016,8 +8176,31 @@ export const AdminView: React.FC = () => {
                     className="w-full text-xs py-1.5 px-3 border border-slate-200 rounded-lg bg-slate-50"
                   />
                 </div>
-                <span className="text-[10px] text-slate-400">
-                  Cada coordenação suporta até 2 supervisores. Selecione da lista ou escreva o nome pretendido.
+                {(() => {
+                  const matched = coordenacoes.find((c) => c.nome.toLowerCase() === newSupCoordenacao.trim().toLowerCase());
+                  if (!matched) return null;
+                  const mob = matched.totalMobilizadores || 10;
+                  const porMob = matched.fichasDiariasPorMobilizador || 5;
+                  const dias = matched.diasTrabalho || 5;
+                  const total = matched.metaFichasTotal || (mob * porMob * dias);
+                  const cota = Math.round(total / 2);
+                  return (
+                    <div className="mt-1.5 p-2.5 bg-purple-50 rounded-lg border border-purple-200 text-[11px] text-purple-950 space-y-1">
+                      <div className="flex items-center gap-1 font-bold text-purple-900">
+                        <Sparkles className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                        <span>Estruturação Automática da Coordenação:</span>
+                      </div>
+                      <div className="text-purple-800">
+                        {mob} mobilizadores × {porMob} fichas/dia × {dias} dias = <strong>{total} fichas no total</strong>.
+                      </div>
+                      <div className="font-semibold text-purple-950">
+                        Cota pré-configurada para este supervisor: <strong>{cota} fichas ({Math.round((mob * porMob) / 2)} fichas/dia)</strong>.
+                      </div>
+                    </div>
+                  );
+                })()}
+                <span className="text-[10px] text-slate-400 mt-1 block">
+                  Cada coordenação suporta até 2 supervisores. As metas são sincronizadas de forma estruturada.
                 </span>
               </div>
 
@@ -7908,32 +9091,127 @@ export const AdminView: React.FC = () => {
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Município / Comuna (Fixo)
-                  </label>
-                  <input
-                    type="text"
-                    value="Sumbe / Sede"
-                    readOnly
-                    className="w-full text-xs font-semibold bg-slate-100 py-2 px-3 rounded-lg border border-slate-300"
-                  />
+              {/* PLANEAMENTO ESTRUTURADO: DIAS DE TRABALHO, MOBILIZADORES E MULTIPLICAÇÃO */}
+              <div className="bg-purple-50/80 p-4 rounded-xl border border-purple-200 space-y-3.5">
+                <div className="flex items-center gap-2">
+                  <Calculator className="w-4 h-4 text-purple-700" />
+                  <span className="text-xs font-bold text-purple-950 uppercase tracking-wide">
+                    Estruturação: Mobilizadores × Fichas Diárias × Dias de Trabalho
+                  </span>
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Meta de Fichas da Coordenação <span className="text-purple-600">*</span>
-                  </label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={500}
-                    required
-                    value={newCoordMetaFichas}
-                    onChange={(e) => setNewCoordMetaFichas(Math.max(1, parseInt(e.target.value) || 1))}
-                    className="w-full text-sm font-bold text-slate-900 py-2 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-600 outline-none"
-                    placeholder="Ex: 50"
-                  />
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Dias de Trabalho <span className="text-purple-600">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={60}
+                      required
+                      value={newCoordDiasTrabalho}
+                      onChange={(e) => {
+                        const dias = Math.max(1, parseInt(e.target.value) || 1);
+                        setNewCoordDiasTrabalho(dias);
+                        setNewCoordMetaFichas(newCoordTotalMobilizadores * newCoordFichasDiariasPorMob * dias);
+                      }}
+                      className="w-full text-xs font-bold text-slate-900 bg-white py-2 px-3 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-purple-600"
+                      placeholder="Ex: 5"
+                    />
+                    <span className="text-[10px] text-slate-500">Dias de campanha</span>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Quantos Mobilizadores <span className="text-purple-600">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={200}
+                      required
+                      value={newCoordTotalMobilizadores}
+                      onChange={(e) => {
+                        const mob = Math.max(1, parseInt(e.target.value) || 1);
+                        setNewCoordTotalMobilizadores(mob);
+                        setNewCoordMetaFichas(mob * newCoordFichasDiariasPorMob * newCoordDiasTrabalho);
+                      }}
+                      className="w-full text-xs font-bold text-slate-900 bg-white py-2 px-3 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-purple-600"
+                      placeholder="Ex: 10"
+                    />
+                    <span className="text-[10px] text-slate-500">Mobilizadores na coord.</span>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Fichas Diárias / Mob. <span className="text-purple-600">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={50}
+                      required
+                      value={newCoordFichasDiariasPorMob}
+                      onChange={(e) => {
+                        const porMob = Math.max(1, parseInt(e.target.value) || 1);
+                        setNewCoordFichasDiariasPorMob(porMob);
+                        setNewCoordMetaFichas(newCoordTotalMobilizadores * porMob * newCoordDiasTrabalho);
+                      }}
+                      className="w-full text-xs font-bold text-slate-900 bg-white py-2 px-3 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-purple-600"
+                      placeholder="Ex: 5"
+                    />
+                    <span className="text-[10px] text-slate-500">Fichas diárias por mob.</span>
+                  </div>
+                </div>
+
+                {/* Resumo da Multiplicação Automática e Divisão por Supervisor */}
+                <div className="bg-white p-3 rounded-lg border border-purple-200 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between text-xs gap-1">
+                    <span className="text-slate-600 font-medium">Fichas Diárias da Coordenação:</span>
+                    <span className="font-mono font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
+                      {newCoordTotalMobilizadores * newCoordFichasDiariasPorMob} fichas / dia ({newCoordTotalMobilizadores} mobilizadores × {newCoordFichasDiariasPorMob} fichas)
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between text-xs gap-1 pt-1 border-t border-slate-100">
+                    <span className="text-slate-700 font-bold">Total Geral da Coordenação ({newCoordDiasTrabalho} dias):</span>
+                    <span className="font-mono font-extrabold text-base text-purple-900">
+                      {newCoordTotalMobilizadores * newCoordFichasDiariasPorMob * newCoordDiasTrabalho} fichas
+                    </span>
+                  </div>
+
+                  <div className="bg-purple-50/70 p-2.5 rounded-lg text-[11px] text-purple-900 flex items-start gap-2 mt-1 border border-purple-200">
+                    <Sparkles className="w-3.5 h-3.5 text-purple-600 shrink-0 mt-0.5" />
+                    <div>
+                      <strong>Cálculo Estruturado nos Supervisores:</strong>{' '}
+                      {newCoordSupervisorIds.length === 2 ? (
+                        <span>
+                          Com 2 supervisores vinculados, cada um recebe automaticamente a meta de{' '}
+                          <strong>
+                            {Math.round((newCoordTotalMobilizadores * newCoordFichasDiariasPorMob * newCoordDiasTrabalho) / 2)} fichas
+                          </strong>{' '}
+                          ({Math.round((newCoordTotalMobilizadores * newCoordFichasDiariasPorMob) / 2)} fichas/dia durante {newCoordDiasTrabalho} dias).
+                        </span>
+                      ) : newCoordSupervisorIds.length === 1 ? (
+                        <span>
+                          Com 1 supervisor vinculado, ele recebe o total de{' '}
+                          <strong>
+                            {newCoordTotalMobilizadores * newCoordFichasDiariasPorMob * newCoordDiasTrabalho} fichas
+                          </strong>{' '}
+                          ({newCoordTotalMobilizadores * newCoordFichasDiariasPorMob} fichas/dia durante {newCoordDiasTrabalho} dias).
+                        </span>
+                      ) : (
+                        <span>
+                          Ao vincular supervisores, o sistema divide automaticamente o total de{' '}
+                          <strong>
+                            {newCoordTotalMobilizadores * newCoordFichasDiariasPorMob * newCoordDiasTrabalho} fichas
+                          </strong>{' '}
+                          pelo número de supervisores da coordenação.
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -8105,31 +9383,127 @@ export const AdminView: React.FC = () => {
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Meta de Fichas Total
-                  </label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={500}
-                    required
-                    value={editCoordMetaFichas}
-                    onChange={(e) => setEditCoordMetaFichas(Math.max(1, parseInt(e.target.value) || 1))}
-                    className="w-full text-sm font-bold text-slate-900 py-2 px-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-600 outline-none"
-                  />
+              {/* PLANEAMENTO ESTRUTURADO: DIAS DE TRABALHO, MOBILIZADORES E MULTIPLICAÇÃO */}
+              <div className="bg-purple-50/80 p-4 rounded-xl border border-purple-200 space-y-3.5">
+                <div className="flex items-center gap-2">
+                  <Calculator className="w-4 h-4 text-purple-700" />
+                  <span className="text-xs font-bold text-purple-950 uppercase tracking-wide">
+                    Estruturação: Mobilizadores × Fichas Diárias × Dias de Trabalho
+                  </span>
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Limite de Supervisores
-                  </label>
-                  <input
-                    type="text"
-                    value="2 Supervisores (Fixo)"
-                    readOnly
-                    className="w-full text-xs font-semibold bg-slate-100 py-2 px-3 rounded-lg border border-slate-300"
-                  />
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Dias de Trabalho <span className="text-purple-600">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={60}
+                      required
+                      value={editCoordDiasTrabalho}
+                      onChange={(e) => {
+                        const dias = Math.max(1, parseInt(e.target.value) || 1);
+                        setEditCoordDiasTrabalho(dias);
+                        setEditCoordMetaFichas(editCoordTotalMobilizadores * editCoordFichasDiariasPorMob * dias);
+                      }}
+                      className="w-full text-xs font-bold text-slate-900 bg-white py-2 px-3 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-purple-600"
+                      placeholder="Ex: 5"
+                    />
+                    <span className="text-[10px] text-slate-500">Dias de campanha</span>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Quantos Mobilizadores <span className="text-purple-600">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={200}
+                      required
+                      value={editCoordTotalMobilizadores}
+                      onChange={(e) => {
+                        const mob = Math.max(1, parseInt(e.target.value) || 1);
+                        setEditCoordTotalMobilizadores(mob);
+                        setEditCoordMetaFichas(mob * editCoordFichasDiariasPorMob * editCoordDiasTrabalho);
+                      }}
+                      className="w-full text-xs font-bold text-slate-900 bg-white py-2 px-3 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-purple-600"
+                      placeholder="Ex: 10"
+                    />
+                    <span className="text-[10px] text-slate-500">Mobilizadores na coord.</span>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Fichas Diárias / Mob. <span className="text-purple-600">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={50}
+                      required
+                      value={editCoordFichasDiariasPorMob}
+                      onChange={(e) => {
+                        const porMob = Math.max(1, parseInt(e.target.value) || 1);
+                        setEditCoordFichasDiariasPorMob(porMob);
+                        setEditCoordMetaFichas(editCoordTotalMobilizadores * porMob * editCoordDiasTrabalho);
+                      }}
+                      className="w-full text-xs font-bold text-slate-900 bg-white py-2 px-3 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-purple-600"
+                      placeholder="Ex: 5"
+                    />
+                    <span className="text-[10px] text-slate-500">Fichas diárias por mob.</span>
+                  </div>
+                </div>
+
+                {/* Resumo da Multiplicação Automática e Divisão por Supervisor */}
+                <div className="bg-white p-3 rounded-lg border border-purple-200 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between text-xs gap-1">
+                    <span className="text-slate-600 font-medium">Fichas Diárias da Coordenação:</span>
+                    <span className="font-mono font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
+                      {editCoordTotalMobilizadores * editCoordFichasDiariasPorMob} fichas / dia ({editCoordTotalMobilizadores} mobilizadores × {editCoordFichasDiariasPorMob} fichas)
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between text-xs gap-1 pt-1 border-t border-slate-100">
+                    <span className="text-slate-700 font-bold">Total Geral da Coordenação ({editCoordDiasTrabalho} dias):</span>
+                    <span className="font-mono font-extrabold text-base text-purple-900">
+                      {editCoordTotalMobilizadores * editCoordFichasDiariasPorMob * editCoordDiasTrabalho} fichas
+                    </span>
+                  </div>
+
+                  <div className="bg-purple-50/70 p-2.5 rounded-lg text-[11px] text-purple-900 flex items-start gap-2 mt-1 border border-purple-200">
+                    <Sparkles className="w-3.5 h-3.5 text-purple-600 shrink-0 mt-0.5" />
+                    <div>
+                      <strong>Cálculo Estruturado nos Supervisores:</strong>{' '}
+                      {editCoordSupervisorIds.length === 2 ? (
+                        <span>
+                          Com 2 supervisores vinculados, cada um recebe automaticamente a meta de{' '}
+                          <strong>
+                            {Math.round((editCoordTotalMobilizadores * editCoordFichasDiariasPorMob * editCoordDiasTrabalho) / 2)} fichas
+                          </strong>{' '}
+                          ({Math.round((editCoordTotalMobilizadores * editCoordFichasDiariasPorMob) / 2)} fichas/dia durante {editCoordDiasTrabalho} dias).
+                        </span>
+                      ) : editCoordSupervisorIds.length === 1 ? (
+                        <span>
+                          Com 1 supervisor vinculado, ele recebe o total de{' '}
+                          <strong>
+                            {editCoordTotalMobilizadores * editCoordFichasDiariasPorMob * editCoordDiasTrabalho} fichas
+                          </strong>{' '}
+                          ({editCoordTotalMobilizadores * editCoordFichasDiariasPorMob} fichas/dia durante {editCoordDiasTrabalho} dias).
+                        </span>
+                      ) : (
+                        <span>
+                          Ao vincular supervisores, o sistema divide automaticamente o total de{' '}
+                          <strong>
+                            {editCoordTotalMobilizadores * editCoordFichasDiariasPorMob * editCoordDiasTrabalho} fichas
+                          </strong>{' '}
+                          pelo número de supervisores da coordenação.
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
 

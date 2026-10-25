@@ -7,7 +7,13 @@ export interface Coordenacao {
   comuna: string;
   supervisorIds: string[]; // 1 a 2 supervisores por coordenação
   limiteSupervisores: number; // fixo em 2
-  metaFichasTotal?: number;
+  diasTrabalho?: number; // Quantidade de dias de trabalho da campanha (ex: 5 dias)
+  totalMobilizadores?: number; // Quantos mobilizadores a coordenação tem (ex: 10)
+  fichasDiariasPorMobilizador?: number; // Fichas diárias por mobilizador (ex: 5 fichas/dia)
+  totalFichasDiarias?: number; // totalMobilizadores * fichasDiariasPorMobilizador (ex: 10 * 5 = 50 fichas/dia)
+  metaFichasTotal?: number; // totalMobilizadores * fichasDiariasPorMobilizador * diasTrabalho (ex: 50 * 5 = 250 fichas)
+  fichasPorSupervisor?: number; // Meta estruturada calculada por supervisor (ex: 250 / 2 = 125 fichas)
+  fichasDiariasPorSupervisor?: number; // Fichas diárias calculadas por supervisor (ex: 50 / 2 = 25 fichas/dia)
   dataCriacao: string;
 }
 
@@ -97,6 +103,7 @@ export interface Submissao {
   totalNao: number;
   status: 'Validado' | 'Pendente' | 'Em Revisão';
   observacoes?: string;
+  offlinePending?: boolean;
 }
 
 export const COMUNAS_SUMBE = [

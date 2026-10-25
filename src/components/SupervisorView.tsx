@@ -39,7 +39,18 @@ const getTodayString = () => {
 };
 
 export const SupervisorView: React.FC = () => {
-  const { userSession, supervisores, submissoes, coordenacoes, addSubmissao, setActiveScreen } = useApp();
+  const {
+    userSession,
+    supervisores,
+    submissoes,
+    coordenacoes,
+    addSubmissao,
+    setActiveScreen,
+    isOnline,
+    offlineQueueCount,
+    isSyncingOffline,
+    syncOfflineSubmissoes,
+  } = useApp();
 
   const isSupervisorSession = userSession?.tipo === 'supervisor';
 
@@ -108,15 +119,32 @@ export const SupervisorView: React.FC = () => {
     return supervisores.find((s) => s.id === selectedAdminSupId) || supervisores[0];
   }, [isSupervisorSession, userSession, supervisores, selectedAdminSupId]);
 
-  // Bairros específicos da coordenação do supervisor ativo
+  // Bairros específicos da coordenação do supervisor ativo com normalização segura
   const bairrosDaMinhaCoordenacao = useMemo(() => {
     if (!activeSupervisor) return [];
-    const coord = (coordenacoes || []).find(
-      (c) =>
-        c.id === activeSupervisor.coordenacaoId ||
-        (activeSupervisor.coordenacao && c.nome.toLowerCase().trim() === activeSupervisor.coordenacao.toLowerCase().trim()) ||
-        (c.supervisorIds && c.supervisorIds.includes(activeSupervisor.id))
-    );
+
+    const normalize = (str?: string) =>
+      (str || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/&/g, 'e')
+        .replace(/[^a-z0-9]/g, '')
+        .trim();
+
+    const supCoordNorm = normalize(activeSupervisor.coordenacao);
+
+    const coord = (coordenacoes || []).find((c) => {
+      if (activeSupervisor.coordenacaoId && c.id === activeSupervisor.coordenacaoId) return true;
+      if (c.supervisorIds && c.supervisorIds.includes(activeSupervisor.id)) return true;
+      const cNomeNorm = normalize(c.nome);
+      return (
+        (supCoordNorm && cNomeNorm === supCoordNorm) ||
+        (supCoordNorm && cNomeNorm.includes(supCoordNorm)) ||
+        (cNomeNorm && supCoordNorm.includes(cNomeNorm))
+      );
+    });
+
     return (coord?.bairros || []).filter((b) => Boolean(b && b.trim()));
   }, [activeSupervisor, coordenacoes]);
 
@@ -185,6 +213,7 @@ export const SupervisorView: React.FC = () => {
 
   const [fichas, setFichas] = useState<FichaFormState[]>([createBlankFicha(1)]);
   const [draftNotice, setDraftNotice] = useState<boolean>(false);
+  const [draftRecoveredTime, setDraftRecoveredTime] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [activeFichaTab, setActiveFichaTab] = useState<number>(0);
   const [submittedModalData, setSubmittedModalData] = useState<{
@@ -195,40 +224,86 @@ export const SupervisorView: React.FC = () => {
     bairros: string[];
   } | null>(null);
 
-  // Recuperar rascunho salvo da sessão (evita perda de dados em caso de atualização de página)
+  // Chave persistente no telemóvel por supervisor (sobrevive ao fechar navegador e fim de bateria)
+  const draftStorageKey = useMemo(() => {
+    return `ms_sumbe_persistent_draft_${activeSupervisor?.id || 'default'}`;
+  }, [activeSupervisor?.id]);
+
+  // Recuperar dados persistentes salvos caso o telemóvel tenha desligado ou a janela tenha sido fechada
   useEffect(() => {
     try {
-      const saved = sessionStorage.getItem('ms_sumbe_ficha_draft');
+      let saved = localStorage.getItem(draftStorageKey);
+      if (!saved) {
+        // Compatibilidade com sessões anteriores
+        saved = sessionStorage.getItem('ms_sumbe_ficha_draft') || localStorage.getItem('ms_sumbe_ficha_draft');
+      }
+
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed.fichas && Array.isArray(parsed.fichas) && parsed.fichas.length > 0) {
-          setFichas(parsed.fichas);
-          if (parsed.dataColeta) setDataColeta(parsed.dataColeta);
-          if (parsed.diaCampanha) setDiaCampanha(parsed.diaCampanha);
-          setDraftNotice(true);
+          // Verificar se tem pelo menos algum dado preenchido
+          const hasData = parsed.fichas.some(
+            (f: FichaFormState) =>
+              (f.bairro && f.bairro.trim() !== '') ||
+              Number(f.total_sim) > 0 ||
+              (f.total_nao !== '' && f.total_nao !== 0 && f.total_nao !== '0')
+          );
+
+          if (hasData) {
+            setFichas(parsed.fichas);
+            if (parsed.dataColeta) setDataColeta(parsed.dataColeta);
+            if (parsed.diaCampanha) setDiaCampanha(parsed.diaCampanha);
+            if (parsed.savedAtTime) {
+              setDraftRecoveredTime(parsed.savedAtTime);
+            } else if (parsed.timestamp) {
+              try {
+                setDraftRecoveredTime(
+                  new Date(parsed.timestamp).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })
+                );
+              } catch {
+                setDraftRecoveredTime('');
+              }
+            }
+            setDraftNotice(true);
+          }
         }
       }
-    } catch {
-      // ignore
+    } catch (e) {
+      console.warn('Erro ao restaurar rascunho:', e);
     }
-  }, []);
+  }, [draftStorageKey]);
 
-  // Salvar rascunho automaticamente a cada alteração
+  // Salvar rascunho automaticamente no localStorage a cada alteração
   useEffect(() => {
     try {
-      const hasContent = fichas.some((f) => f.bairro || f.total_sim > 0 || f.total_nao !== '');
+      const hasContent = fichas.some((f) => f.bairro || Number(f.total_sim) > 0 || f.total_nao !== '');
       if (hasContent) {
-        sessionStorage.setItem('ms_sumbe_ficha_draft', JSON.stringify({ fichas, dataColeta, diaCampanha }));
+        const now = new Date();
+        const payload = {
+          fichas,
+          dataColeta,
+          diaCampanha,
+          timestamp: now.toISOString(),
+          savedAtTime: now.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' }),
+        };
+        localStorage.setItem(draftStorageKey, JSON.stringify(payload));
       }
     } catch {
       // ignore
     }
-  }, [fichas, dataColeta, diaCampanha]);
+  }, [fichas, dataColeta, diaCampanha, draftStorageKey]);
 
   const handleClearDraft = () => {
-    sessionStorage.removeItem('ms_sumbe_ficha_draft');
+    try {
+      localStorage.removeItem(draftStorageKey);
+      sessionStorage.removeItem('ms_sumbe_ficha_draft');
+      localStorage.removeItem('ms_sumbe_ficha_draft');
+    } catch {
+      // ignore
+    }
     setFichas([createBlankFicha(1)]);
     setDraftNotice(false);
+    setDraftRecoveredTime('');
   };
 
   // Totais em tempo real deste lote de fichas
@@ -412,9 +487,16 @@ export const SupervisorView: React.FC = () => {
         status: 'Validado',
       });
 
-      // Limpar rascunho guardado após envio com sucesso
-      sessionStorage.removeItem('ms_sumbe_ficha_draft');
+      // Limpar rascunho persistente guardado após envio com sucesso
+      try {
+        localStorage.removeItem(draftStorageKey);
+        sessionStorage.removeItem('ms_sumbe_ficha_draft');
+        localStorage.removeItem('ms_sumbe_ficha_draft');
+      } catch {
+        // ignore
+      }
       setDraftNotice(false);
+      setDraftRecoveredTime('');
 
       setSubmittedModalData({
         id: newSubmissao.id,
@@ -536,21 +618,97 @@ export const SupervisorView: React.FC = () => {
           </div>
         )}
 
-        {draftNotice && (
-          <div className="mt-2.5 sm:mt-3 bg-emerald-50 border border-emerald-300 text-emerald-950 rounded-xl p-2.5 sm:p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 text-xs shadow-2xs">
-            <div className="flex items-center gap-2">
-              <span className="text-base">💾</span>
-              <span className="text-[11px] sm:text-xs leading-snug">
-                <strong>Rascunho recuperado:</strong> Os dados que estava a preencher foram restaurados automaticamente.
-              </span>
+        {/* BANNER 1: MODO OFFLINE DETETADO */}
+        {!isOnline && (
+          <div className="mt-2.5 sm:mt-3 bg-gradient-to-r from-amber-600 to-amber-700 text-white rounded-xl p-3 sm:p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-sm border border-amber-500">
+            <div className="flex items-center gap-2.5">
+              <span className="text-2xl">📴</span>
+              <div className="text-xs leading-snug">
+                <div className="font-extrabold text-sm flex items-center gap-2">
+                  <span>Modo Offline Ativo (Sem Rede)</span>
+                  <span className="bg-amber-800/80 text-[10px] uppercase tracking-wide font-black px-2 py-0.5 rounded-full">
+                    Gravação Local
+                  </span>
+                </div>
+                <div className="text-amber-100 mt-0.5">
+                  Está sem ligação à internet. Não se preocupe! Pode continuar a preencher e carregar em <strong>"Enviar Ficha"</strong>. Ficará guardada em segurança no telemóvel e enviará automaticamente à coordenação assim que apanhar rede.
+                </div>
+              </div>
+            </div>
+            {offlineQueueCount > 0 && (
+              <div className="bg-amber-900/60 border border-amber-400/40 text-amber-50 px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 text-center">
+                {offlineQueueCount} {offlineQueueCount === 1 ? 'ficha pendente' : 'fichas pendentes'}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* BANNER 2: FICHAS GUARDADAS OFFLINE PRONTAS PARA ENVIAR COM SINAL DETETADO */}
+        {offlineQueueCount > 0 && isOnline && (
+          <div className="mt-2.5 sm:mt-3 bg-blue-50 border border-blue-300 rounded-xl p-3 sm:p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-blue-950 shadow-2xs">
+            <div className="flex items-center gap-2.5">
+              <span className="text-2xl">📦</span>
+              <div className="leading-snug">
+                <div className="font-extrabold text-sm text-[#1a53db] flex items-center gap-2">
+                  <span>
+                    {offlineQueueCount} {offlineQueueCount === 1 ? 'remessa gravada' : 'remessas gravadas'} no telemóvel
+                  </span>
+                  <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2 py-0.5 rounded-full">
+                    Sinal Disponível
+                  </span>
+                </div>
+                <div className="text-blue-800 mt-0.5">
+                  Ligação restabelecida. Pode sincronizar agora com o servidor central da coordenação.
+                </div>
+              </div>
             </div>
             <button
               type="button"
-              onClick={handleClearDraft}
-              className="text-rose-700 hover:text-rose-900 font-bold underline text-xs cursor-pointer shrink-0"
+              onClick={() => syncOfflineSubmissoes()}
+              disabled={isSyncingOffline}
+              className="bg-[#1a53db] hover:bg-[#1848c4] text-white font-extrabold px-3.5 py-2 rounded-lg text-xs shrink-0 cursor-pointer transition shadow-2xs flex items-center justify-center gap-2 disabled:opacity-50"
             >
-              Limpar Rascunho
+              <span>{isSyncingOffline ? 'A sincronizar...' : '🔄 Sincronizar Agora'}</span>
             </button>
+          </div>
+        )}
+
+        {/* BANNER 3: RECUPERAÇÃO AUTOMÁTICA DE DADOS (SOBREVIVE AO FECHAR OU FIM DE BATERIA) */}
+        {draftNotice && (
+          <div className="mt-2.5 sm:mt-3 bg-emerald-50 border border-emerald-300 text-emerald-950 rounded-xl p-3 sm:p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 text-xs shadow-2xs">
+            <div className="flex items-center gap-2.5">
+              <span className="text-2xl">🔋</span>
+              <div className="leading-snug">
+                <div className="font-extrabold text-sm text-emerald-900 flex items-center gap-1.5">
+                  <span>Recuperação Automática: Trabalho Protegido!</span>
+                  {draftRecoveredTime && (
+                    <span className="text-[10px] bg-emerald-200/80 text-emerald-900 font-bold px-1.5 py-0.5 rounded">
+                      Salvo às {draftRecoveredTime}
+                    </span>
+                  )}
+                </div>
+                <div className="text-emerald-800 mt-0.5">
+                  Recuperámos os dados que estava a preencher antes do telemóvel desligar por falta de carga ou fechar a janela. Pode continuar a preencher sem perder nada.
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setDraftNotice(false)}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs cursor-pointer shadow-2xs"
+              >
+                Continuar
+              </button>
+              <button
+                type="button"
+                onClick={handleClearDraft}
+                className="text-rose-700 hover:text-rose-900 font-bold underline text-xs cursor-pointer px-1"
+                title="Descartar rascunho e começar ficha vazia"
+              >
+                Descartar
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -752,6 +910,7 @@ export const SupervisorView: React.FC = () => {
                           todosBairros={todosBairrosCadastrados}
                           bairrosCoordenacao={bairrosDaMinhaCoordenacao}
                           coordenacaoNome={activeSupervisor?.coordenacao}
+                          apenasCoordenacao={true}
                           required={true}
                           placeholder="Clique aqui para marcar os bairros visitados..."
                         />

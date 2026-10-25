@@ -7,7 +7,7 @@ import { AdminView } from './components/AdminView';
 import { SupervisorHistoryView } from './components/SupervisorHistoryView';
 
 const MainLayout: React.FC = () => {
-  const { userSession, activeScreen } = useApp();
+  const { userSession, activeScreen, offlineSyncToast } = useApp();
 
   // Se não houver sessão iniciada, apresenta o ecrã de acesso seguro
   if (!userSession) {
@@ -17,7 +17,7 @@ const MainLayout: React.FC = () => {
   const isLeitor = userSession.tipo === 'leitor';
 
   return (
-    <div className="min-h-screen bg-[#f4f7f6] text-[#333333] flex flex-col">
+    <div className="min-h-screen bg-[#f4f7f6] text-[#333333] flex flex-col relative">
       {/* Barra de Navegação Institucional */}
       <NavigationHeader />
 
@@ -33,6 +33,14 @@ const MainLayout: React.FC = () => {
           </>
         )}
       </main>
+
+      {/* Notificação Flutuante de Sincronização Automática Offline */}
+      {offlineSyncToast && (
+        <div className="fixed bottom-4 right-4 z-50 max-w-sm bg-emerald-900 text-white px-4 py-3 rounded-xl shadow-xl border border-emerald-700 flex items-center gap-3 animate-bounce">
+          <span className="text-xl shrink-0">✅</span>
+          <span className="text-xs font-semibold leading-snug">{offlineSyncToast}</span>
+        </div>
+      )}
     </div>
   );
 };

@@ -15,8 +15,20 @@ import {
   ResponsiveContainer,
   CartesianGrid,
   Legend,
+  AreaChart,
+  Area,
+  LineChart,
+  Line,
+  RadarChart,
+  Radar,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis,
+  ComposedChart,
+  ReferenceLine,
 } from 'recharts';
 import {
+  Activity,
   LayoutDashboard,
   Users,
   FileSpreadsheet,
@@ -266,6 +278,11 @@ export const AdminView: React.FC = () => {
   // Estados para Gráficos Recharts das 8 Categorias de Mobilização
   const [categoriaChartMetric, setCategoriaChartMetric] = useState<'pessoas' | 'locais' | 'comparativo' | 'eficiencia'>('pessoas');
   const [categoriaChartType, setCategoriaChartType] = useState<'barras' | 'pizza'>('barras');
+
+  // Estados para os 4 Novos Tipos de Gráficos (Área, Linhas, Radar e Composto)
+  const [areaChartMode, setAreaChartMode] = useState<'diario' | 'acumulado'>('diario');
+  const [radarChartDimension, setRadarChartDimension] = useState<'ambos' | 'pessoas' | 'locais'>('ambos');
+  const [composedChartGroupBy, setComposedChartGroupBy] = useState<'coordenacoes' | 'supervisores'>('coordenacoes');
 
   // ==============================================================
   // ESTADOS DE FILTROS GLOBAIS DE DATA (PERÍODOS) E ZONA (LOCAIS DE INTERVENÇÃO)
@@ -1810,6 +1827,227 @@ export const AdminView: React.FC = () => {
       taxaGlobalCumprimento: Number(taxaGlobalCumprimento.toFixed(1)),
     };
   }, [supervisores, submissoesAtivas, coordenacoes]);
+
+  // ==============================================================
+  // 4 NOVOS TIPOS DE GRÁFICOS: PREPARAÇÃO DE DADOS ANALÍTICOS AVANÇADOS
+  // 1. Gráfico de Área (AreaChart): Evolução Temporal & Ritmo Diário
+  // 2. Gráfico de Linha (LineChart): Tendência da Taxa de Adesão vs Meta Sanitária (85%)
+  // 3. Gráfico de Radar (RadarChart): Equilíbrio Multidimensional das 8 Categorias
+  // 4. Gráfico Composto (ComposedChart): Metas de Fichas vs Alcance Populacional
+  // ==============================================================
+
+  // 1. DADOS PARA O GRÁFICO DE ÁREA COM GRADIENTES (EVOLUÇÃO TEMPORAL & DIÁRIA)
+  const areaTimelineData = useMemo(() => {
+    const mapa = new Map<
+      string,
+      {
+        data: string;
+        dataFormatada: string;
+        diaCampanha: number;
+        sim: number;
+        nao: number;
+        totalPessoas: number;
+        fichas: number;
+        locais: number;
+      }
+    >();
+
+    submissoesAtivas.forEach((sub) => {
+      const dataKey = sub.data || (sub.dataEnvio ? sub.dataEnvio.slice(0, 10) : 'Sem Data');
+      if (!mapa.has(dataKey)) {
+        let dataFormatada = dataKey;
+        if (dataKey.includes('-')) {
+          const parts = dataKey.split('-');
+          if (parts.length === 3) dataFormatada = `${parts[2]}/${parts[1]}`;
+        }
+        mapa.set(dataKey, {
+          data: dataKey,
+          dataFormatada,
+          diaCampanha: sub.diaCampanha || 1,
+          sim: 0,
+          nao: 0,
+          totalPessoas: 0,
+          fichas: 0,
+          locais: 0,
+        });
+      }
+
+      const item = mapa.get(dataKey)!;
+      let subSim = 0;
+      let subNao = 0;
+      let subLocais = 0;
+
+      (sub.fichas || []).forEach((f) => {
+        subSim += Number(f.total_sim) || 0;
+        subNao += Number(f.total_nao) || 0;
+        subLocais +=
+          (Number(f.casa_locais) || 0) +
+          (Number(f.igrejas_locais) || 0) +
+          (Number(f.pracas_locais) || 0) +
+          (Number(f.paragem_locais) || 0) +
+          (Number(f.creches_locais) || 0) +
+          (Number(f.escolas_locais) || 0) +
+          (Number(f.agua_locais) || 0) +
+          (Number(f.outros_locais) || 0);
+      });
+
+      if (!sub.fichas || sub.fichas.length === 0) {
+        subSim = Number(sub.totalSim) || 0;
+        subNao = Number(sub.totalNao) || 0;
+        subLocais = Number(sub.totalLocais) || 0;
+      }
+
+      item.sim += subSim;
+      item.nao += subNao;
+      item.totalPessoas += (subSim + subNao);
+      item.locais += subLocais;
+      item.fichas += (sub.fichas && sub.fichas.length > 0 ? sub.fichas.length : 1);
+    });
+
+    const ordenados = Array.from(mapa.values()).sort((a, b) => a.data.localeCompare(b.data));
+
+    let runPessoas = 0;
+    let runSim = 0;
+    let runNao = 0;
+    let runFichas = 0;
+
+    return ordenados.map((item, idx) => {
+      runPessoas += item.totalPessoas;
+      runSim += item.sim;
+      runNao += item.nao;
+      runFichas += item.fichas;
+
+      const taxa = item.totalPessoas > 0 ? Math.round((item.sim / item.totalPessoas) * 100) : 0;
+      const taxaAcumulada = runPessoas > 0 ? Math.round((runSim / runPessoas) * 100) : 0;
+
+      return {
+        ...item,
+        diaLabel: `D${idx + 1} (${item.dataFormatada})`,
+        acumuladoPessoas: runPessoas,
+        acumuladoSim: runSim,
+        acumuladoNao: runNao,
+        acumuladoFichas: runFichas,
+        taxaAdesao: taxa,
+        taxaAcumulada,
+      };
+    });
+  }, [submissoesAtivas]);
+
+  // 2. DADOS PARA O GRÁFICO DE LINHAS COM META SANITÁRIA (TENDÊNCIA DA TAXA DE ADESÃO)
+  const lineTrendData = useMemo(() => {
+    return areaTimelineData.map((d) => ({
+      name: d.diaLabel,
+      dataCompleta: d.data,
+      dataFormatada: d.dataFormatada,
+      taxaAdesao: d.taxaAdesao,
+      taxaAcumulada: d.taxaAcumulada,
+      metaSanitaria: 85, // Meta de excelência comunitária da saúde pública (85%)
+      totalPessoas: d.totalPessoas,
+      sim: d.sim,
+      nao: d.nao,
+    }));
+  }, [areaTimelineData]);
+
+  // 3. DADOS PARA O GRÁFICO DE RADAR / TEIA DE ARANHA (EQUILÍBRIO DAS 8 CATEGORIAS)
+  const radarCategoriasData = useMemo(() => {
+    const cat = automatedFichaPlanning.categoriasTotaisGeral;
+    const base = [
+      { categoria: 'Casas', nomeCompleto: 'Residências Porta a Porta', pessoas: cat.casa.pessoas || 0, locais: cat.casa.locais || 0 },
+      { categoria: 'Igrejas', nomeCompleto: 'Igrejas & Cultos', pessoas: cat.igrejas.pessoas || 0, locais: cat.igrejas.locais || 0 },
+      { categoria: 'Praças', nomeCompleto: 'Mercados & Feiras', pessoas: cat.pracas.pessoas || 0, locais: cat.pracas.locais || 0 },
+      { categoria: 'Paragens', nomeCompleto: 'Paragens de Táxi / Motos', pessoas: cat.paragem.pessoas || 0, locais: cat.paragem.locais || 0 },
+      { categoria: 'Creches', nomeCompleto: 'Creches & Infantários', pessoas: cat.creches.pessoas || 0, locais: cat.creches.locais || 0 },
+      { categoria: 'Escolas', nomeCompleto: 'Escolas & Colégios', pessoas: cat.escolas.pessoas || 0, locais: cat.escolas.locais || 0 },
+      { categoria: 'Água', nomeCompleto: 'Pontos de Água & Chafarizes', pessoas: cat.agua.pessoas || 0, locais: cat.agua.locais || 0 },
+      { categoria: 'Outros', nomeCompleto: 'Outros Pontos Comunitários', pessoas: cat.outros.pessoas || 0, locais: cat.outros.locais || 0 },
+    ];
+
+    const maxPessoas = Math.max(1, ...base.map((b) => b.pessoas));
+    const maxLocais = Math.max(1, ...base.map((b) => b.locais));
+
+    return base.map((item) => ({
+      ...item,
+      // Índices normalizados 0-100 para representação proporcional no radar
+      pessoasIndex: Math.round((item.pessoas / maxPessoas) * 100),
+      locaisIndex: Math.round((item.locais / maxLocais) * 100),
+    }));
+  }, [automatedFichaPlanning.categoriasTotaisGeral]);
+
+  // 4. DADOS PARA O GRÁFICO COMPOSTO HÍBRIDO (BARRAS DE METAS + LINHA DE PESSOAS)
+  const composedPerformanceData = useMemo(() => {
+    if (composedChartGroupBy === 'coordenacoes' && coordenacoes.length > 0) {
+      return coordenacoes.map((coord) => {
+        const supsDaCoord = supervisores.filter(
+          (s) => s.coordenacaoId === coord.id || s.coordenacao === coord.nome
+        );
+        const supIds = new Set(supsDaCoord.map((s) => s.id));
+        const subsDaCoord = submissoesAtivas.filter(
+          (s) => supIds.has(s.supervisorId)
+        );
+
+        let fichas = 0;
+        let pessoas = 0;
+        let locais = 0;
+
+        subsDaCoord.forEach((s) => {
+          fichas += (s.fichas || []).length || 1;
+          pessoas += Number(s.totalSim || 0) + Number(s.totalNao || 0);
+          locais += Number(s.totalLocais || 0);
+        });
+
+        const metaCalculada =
+          supsDaCoord.reduce((acc, s) => {
+            const dias = s.diasTrabalhoPrevistos || 5;
+            const fDia = s.fichasDiariasPrevistas || 5;
+            return acc + (s.totalFichasPrevistas || fDia * dias);
+          }, 0) || Math.max(25, (coord.totalMobilizadores || 2) * 25);
+
+        const taxaCumprimento =
+          metaCalculada > 0 ? Math.min(200, Math.round((fichas / metaCalculada) * 100)) : 0;
+
+        return {
+          id: coord.id,
+          nome: coord.nome.replace('Coordenação', 'Coord.').trim(),
+          nomeCompleto: coord.nome,
+          fichasLancadas: fichas,
+          metaFichas: metaCalculada,
+          pessoasMobilizadas: pessoas,
+          locaisVisitados: locais,
+          taxaCumprimento,
+        };
+      });
+    }
+
+    // Se for por supervisores ou se ainda não existirem coordenações
+    return supervisores.map((sup) => {
+      const subs = submissoesAtivas.filter((s) => s.supervisorId === sup.id);
+      let fichas = 0;
+      let pessoas = 0;
+      let locais = 0;
+
+      subs.forEach((s) => {
+        fichas += (s.fichas || []).length || 1;
+        pessoas += Number(s.totalSim || 0) + Number(s.totalNao || 0);
+        locais += Number(s.totalLocais || 0);
+      });
+
+      const dias = sup.diasTrabalhoPrevistos || 5;
+      const fDia = sup.fichasDiariasPrevistas || 5;
+      const meta = sup.totalFichasPrevistas || fDia * dias;
+      const taxaCumprimento = meta > 0 ? Math.min(200, Math.round((fichas / meta) * 100)) : 0;
+
+      return {
+        id: sup.id,
+        nome: sup.nome.split(' ')[0] + ' ' + (sup.nome.split(' ')[1] ? sup.nome.split(' ')[1].charAt(0) + '.' : ''),
+        nomeCompleto: sup.nome,
+        fichasLancadas: fichas,
+        metaFichas: meta,
+        pessoasMobilizadas: pessoas,
+        locaisVisitados: locais,
+        taxaCumprimento,
+      };
+    });
+  }, [composedChartGroupBy, coordenacoes, supervisores, submissoesAtivas]);
 
   // Submissões filtradas para o Explorador de Fichas por Dia (Supervisores & Coordenações)
   const filteredSubmissoesDiario = useMemo(() => {
@@ -4721,6 +4959,519 @@ export const AdminView: React.FC = () => {
                           </div>
                         ))}
                       </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* ============================================================ */}
+              {/* SECÇÃO DOS 4 NOVOS TIPOS DE GRÁFICOS ANALÍTICOS (ÁREA, LINHA, RADAR, COMPOSTO) */}
+              {/* ============================================================ */}
+              <div className="space-y-6">
+                <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-5 rounded-2xl border border-indigo-900/50 shadow-md text-white">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-indigo-500/20 border border-indigo-400/30 text-indigo-400 flex items-center justify-center shrink-0">
+                        <Activity className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-base sm:text-lg font-black text-white">
+                            4 Novos Tipos de Gráficos Analíticos de Terreno
+                          </h3>
+                          <span className="text-[10px] bg-indigo-500/30 text-indigo-200 border border-indigo-400/30 px-2 py-0.5 rounded-full font-bold">
+                            Recharts Avançado
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-300 mt-0.5">
+                          Visualização analítica de alto nível: <strong>Área Contínua</strong>, <strong>Linha de Tendência com Meta</strong>, <strong>Radar Multidimensional</strong> e <strong>Gráfico Composto Híbrido</strong>
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 self-start sm:self-auto">
+                      <span className="text-xs font-mono bg-indigo-950 text-indigo-300 border border-indigo-800/80 px-2.5 py-1 rounded-lg">
+                        {areaTimelineData.length} dias registados
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* NOVO GRÁFICO 1: GRÁFICO DE ÁREA COM GRADIENTE (AREACHART) */}
+                  <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between space-y-4">
+                    <div>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                            <h4 className="font-bold text-slate-800 text-sm sm:text-base">
+                              1. Gráfico de Área: Evolução Temporal da Mobilização
+                            </h4>
+                          </div>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            Volume de Pessoas com Adesão (Sim) vs Recusas (Não) ao longo das datas
+                          </p>
+                        </div>
+
+                        {/* Seletor Diário vs Acumulado */}
+                        <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setAreaChartMode('diario')}
+                            className={`px-2.5 py-1 rounded-md font-semibold transition cursor-pointer ${
+                              areaChartMode === 'diario'
+                                ? 'bg-white text-emerald-700 shadow-2xs font-bold'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            Diário
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setAreaChartMode('acumulado')}
+                            className={`px-2.5 py-1 rounded-md font-semibold transition cursor-pointer ${
+                              areaChartMode === 'acumulado'
+                                ? 'bg-white text-emerald-700 shadow-2xs font-bold'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            Acumulado
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="h-72 w-full pt-3">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <AreaChart
+                            data={areaTimelineData}
+                            margin={{ top: 10, right: 15, left: -15, bottom: 20 }}
+                          >
+                            <defs>
+                              <linearGradient id="colorAreaSim" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#10b981" stopOpacity={0.7} />
+                                <stop offset="95%" stopColor="#10b981" stopOpacity={0.05} />
+                              </linearGradient>
+                              <linearGradient id="colorAreaNao" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.6} />
+                                <stop offset="95%" stopColor="#f43f5e" stopOpacity={0.05} />
+                              </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                            <XAxis
+                              dataKey="dataFormatada"
+                              tick={{ fontSize: 11, fill: '#64748b' }}
+                            />
+                            <YAxis tick={{ fontSize: 11, fill: '#64748b' }} />
+                            <Tooltip
+                              contentStyle={{
+                                backgroundColor: '#0f172a',
+                                borderColor: '#334155',
+                                borderRadius: '8px',
+                                color: '#fff',
+                                fontSize: '12px',
+                              }}
+                              formatter={(value: any, name: any) => [
+                                Number(value).toLocaleString('pt-PT'),
+                                name === 'sim' || name === 'acumuladoSim'
+                                  ? 'Adesão (Sim)'
+                                  : name === 'nao' || name === 'acumuladoNao'
+                                  ? 'Recusa (Não)'
+                                  : name,
+                              ]}
+                              labelFormatter={(label, payload) => {
+                                const item = payload?.[0]?.payload;
+                                return item ? `${item.diaLabel} • Total: ${(item.totalPessoas || 0).toLocaleString('pt-PT')} pessoas` : label;
+                              }}
+                            />
+                            <Legend
+                              verticalAlign="top"
+                              align="right"
+                              iconType="circle"
+                              wrapperStyle={{ fontSize: '11px', paddingBottom: '10px' }}
+                            />
+                            <Area
+                              type="monotone"
+                              dataKey={areaChartMode === 'diario' ? 'sim' : 'acumuladoSim'}
+                              name="Pessoas com Adesão (Sim)"
+                              stroke="#10b981"
+                              strokeWidth={2}
+                              fillOpacity={1}
+                              fill="url(#colorAreaSim)"
+                            />
+                            <Area
+                              type="monotone"
+                              dataKey={areaChartMode === 'diario' ? 'nao' : 'acumuladoNao'}
+                              name="Recusas Registadas (Não)"
+                              stroke="#f43f5e"
+                              strokeWidth={2}
+                              fillOpacity={1}
+                              fill="url(#colorAreaNao)"
+                            />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+                      <span>Curva contínua de adesão temporal</span>
+                      <span className="font-mono font-semibold text-emerald-700">
+                        {stats.totalSim.toLocaleString('pt-PT')} Sim vs {stats.totalNao.toLocaleString('pt-PT')} Não
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* NOVO GRÁFICO 2: GRÁFICO DE LINHAS COM META SANITÁRIA (LINECHART) */}
+                  <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between space-y-4">
+                    <div>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full bg-blue-600"></span>
+                            <h4 className="font-bold text-slate-800 text-sm sm:text-base">
+                              2. Gráfico de Linha: Taxa de Adesão (%) vs Meta
+                            </h4>
+                          </div>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            Tendência diária da percentagem afirmativa comparada com a meta sanitária (85%)
+                          </p>
+                        </div>
+
+                        <span className="text-[11px] font-mono bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-md font-semibold self-start sm:self-auto">
+                          Meta Alvo: 85%
+                        </span>
+                      </div>
+
+                      <div className="h-72 w-full pt-3">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart
+                            data={lineTrendData}
+                            margin={{ top: 10, right: 15, left: -15, bottom: 20 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                            <XAxis
+                              dataKey="dataFormatada"
+                              tick={{ fontSize: 11, fill: '#64748b' }}
+                            />
+                            <YAxis
+                              domain={[0, 100]}
+                              unit="%"
+                              tick={{ fontSize: 11, fill: '#64748b' }}
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                backgroundColor: '#0f172a',
+                                borderColor: '#334155',
+                                borderRadius: '8px',
+                                color: '#fff',
+                                fontSize: '12px',
+                              }}
+                              formatter={(value: any, name: any) => [
+                                `${value}%`,
+                                name,
+                              ]}
+                              labelFormatter={(label, payload) => {
+                                const item = payload?.[0]?.payload;
+                                return item ? `${item.name} (${item.dataCompleta})` : label;
+                              }}
+                            />
+                            <Legend
+                              verticalAlign="top"
+                              align="right"
+                              iconType="circle"
+                              wrapperStyle={{ fontSize: '11px', paddingBottom: '10px' }}
+                            />
+                            <ReferenceLine
+                              y={85}
+                              stroke="#f59e0b"
+                              strokeDasharray="4 4"
+                              strokeWidth={2}
+                              label={{
+                                value: 'Meta Sanitária 85%',
+                                fill: '#d97706',
+                                fontSize: 10,
+                                position: 'insideTopRight',
+                              }}
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="taxaAdesao"
+                              name="Taxa de Adesão Diária (%)"
+                              stroke="#2563eb"
+                              strokeWidth={3}
+                              dot={{ r: 4, fill: '#2563eb', strokeWidth: 1 }}
+                              activeDot={{ r: 7 }}
+                            />
+                            <Line
+                              type="monotone"
+                              dataKey="taxaAcumulada"
+                              name="Média Acumulada (%)"
+                              stroke="#8b5cf6"
+                              strokeWidth={2}
+                              strokeDasharray="3 3"
+                              dot={{ r: 3, fill: '#8b5cf6' }}
+                            />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+                      <span>Indicador de qualidade sanitária</span>
+                      <span className="font-mono font-semibold text-blue-700">
+                        Média Atual: {acceptanceMetrics.taxaAceitacao}%
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* NOVO GRÁFICO 3: GRÁFICO DE RADAR / TEIA DE ARANHA (RADARCHART) */}
+                  <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between space-y-4">
+                    <div>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full bg-purple-600"></span>
+                            <h4 className="font-bold text-slate-800 text-sm sm:text-base">
+                              3. Gráfico de Radar: Equilíbrio das 8 Categorias
+                            </h4>
+                          </div>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            Visão 360° da cobertura comunitária (Casas, Igrejas, Mercados, Paragens, Escolas, etc.)
+                          </p>
+                        </div>
+
+                        {/* Seletor de Dimensão do Radar */}
+                        <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setRadarChartDimension('ambos')}
+                            className={`px-2 py-1 rounded-md font-semibold transition cursor-pointer ${
+                              radarChartDimension === 'ambos'
+                                ? 'bg-white text-purple-700 shadow-2xs font-bold'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            Ambos
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setRadarChartDimension('pessoas')}
+                            className={`px-2 py-1 rounded-md font-semibold transition cursor-pointer ${
+                              radarChartDimension === 'pessoas'
+                                ? 'bg-white text-purple-700 shadow-2xs font-bold'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            Pessoas
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setRadarChartDimension('locais')}
+                            className={`px-2 py-1 rounded-md font-semibold transition cursor-pointer ${
+                              radarChartDimension === 'locais'
+                                ? 'bg-white text-purple-700 shadow-2xs font-bold'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            Locais
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="h-72 w-full pt-1">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <RadarChart data={radarCategoriasData} cx="50%" cy="50%" outerRadius="75%">
+                            <PolarGrid stroke="#e2e8f0" />
+                            <PolarAngleAxis
+                              dataKey="categoria"
+                              tick={{ fill: '#334155', fontSize: 11, fontWeight: 600 }}
+                            />
+                            <PolarRadiusAxis
+                              angle={30}
+                              domain={[0, 100]}
+                              tick={{ fontSize: 9, fill: '#94a3b8' }}
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                backgroundColor: '#0f172a',
+                                borderColor: '#334155',
+                                borderRadius: '8px',
+                                color: '#fff',
+                                fontSize: '12px',
+                              }}
+                              formatter={(value: any, name: any, item: any) => {
+                                const p = item?.payload;
+                                if (name === 'Pessoas Mobilizadas') {
+                                  return [`${(p?.pessoas || 0).toLocaleString('pt-PT')} pessoas (${value} pts)`, name];
+                                }
+                                return [`${p?.locais || 0} locais visitados (${value} pts)`, name];
+                              }}
+                              labelFormatter={(label, payload) => {
+                                const item = payload?.[0]?.payload;
+                                return item ? `${item.categoria} (${item.nomeCompleto})` : label;
+                              }}
+                            />
+                            <Legend
+                              verticalAlign="bottom"
+                              align="center"
+                              iconType="circle"
+                              wrapperStyle={{ fontSize: '11px', paddingTop: '6px' }}
+                            />
+                            {(radarChartDimension === 'ambos' || radarChartDimension === 'pessoas') && (
+                              <Radar
+                                name="Pessoas Mobilizadas"
+                                dataKey="pessoasIndex"
+                                stroke="#2563eb"
+                                fill="#2563eb"
+                                fillOpacity={0.4}
+                              />
+                            )}
+                            {(radarChartDimension === 'ambos' || radarChartDimension === 'locais') && (
+                              <Radar
+                                name="Locais Cobertos"
+                                dataKey="locaisIndex"
+                                stroke="#10b981"
+                                fill="#10b981"
+                                fillOpacity={0.3}
+                              />
+                            )}
+                          </RadarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+                      <span>Equilíbrio entre tipos de ambiente</span>
+                      <span className="font-mono font-semibold text-purple-700">
+                        8 Pontos de Intervenção
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* NOVO GRÁFICO 4: GRÁFICO COMPOSTO HÍBRIDO (COMPOSEDCHART - BARRAS + LINHA) */}
+                  <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between space-y-4">
+                    <div>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+                            <h4 className="font-bold text-slate-800 text-sm sm:text-base">
+                              4. Gráfico Composto: Metas vs Pessoas Sensibilizadas
+                            </h4>
+                          </div>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            Barras com Fichas Lançadas vs Meta Requerida e Linha de Pessoas Alcançadas
+                          </p>
+                        </div>
+
+                        {/* Seletor Coordenação vs Supervisor */}
+                        <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setComposedChartGroupBy('coordenacoes')}
+                            className={`px-2.5 py-1 rounded-md font-semibold transition cursor-pointer ${
+                              composedChartGroupBy === 'coordenacoes'
+                                ? 'bg-white text-indigo-700 shadow-2xs font-bold'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            Coordenações
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setComposedChartGroupBy('supervisores')}
+                            className={`px-2.5 py-1 rounded-md font-semibold transition cursor-pointer ${
+                              composedChartGroupBy === 'supervisores'
+                                ? 'bg-white text-indigo-700 shadow-2xs font-bold'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            Supervisores
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="h-72 w-full pt-3">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <ComposedChart
+                            data={composedPerformanceData}
+                            margin={{ top: 10, right: 15, left: -15, bottom: 25 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                            <XAxis
+                              dataKey="nome"
+                              tick={{ fontSize: 11, fill: '#475569', fontWeight: 600 }}
+                              angle={-15}
+                              textAnchor="end"
+                              interval={0}
+                            />
+                            <YAxis
+                              yAxisId="left"
+                              tick={{ fontSize: 11, fill: '#64748b' }}
+                            />
+                            <YAxis
+                              yAxisId="right"
+                              orientation="right"
+                              tick={{ fontSize: 11, fill: '#e11d48' }}
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                backgroundColor: '#0f172a',
+                                borderColor: '#334155',
+                                borderRadius: '8px',
+                                color: '#fff',
+                                fontSize: '12px',
+                              }}
+                              formatter={(value: any, name: any) => [
+                                Number(value).toLocaleString('pt-PT'),
+                                name,
+                              ]}
+                              labelFormatter={(label, payload) => {
+                                const item = payload?.[0]?.payload;
+                                return item ? `${item.nomeCompleto || label} • ${item.taxaCumprimento}% da meta atingida` : label;
+                              }}
+                            />
+                            <Legend
+                              verticalAlign="top"
+                              align="right"
+                              iconType="circle"
+                              wrapperStyle={{ fontSize: '11px', paddingBottom: '10px' }}
+                            />
+                            <Bar
+                              yAxisId="left"
+                              dataKey="fichasLancadas"
+                              name="Fichas Lançadas"
+                              fill="#2667ff"
+                              radius={[4, 4, 0, 0]}
+                              maxBarSize={28}
+                            />
+                            <Bar
+                              yAxisId="left"
+                              dataKey="metaFichas"
+                              name="Meta Total Requerida"
+                              fill="#cbd5e1"
+                              radius={[4, 4, 0, 0]}
+                              maxBarSize={28}
+                            />
+                            <Line
+                              yAxisId="right"
+                              type="monotone"
+                              dataKey="pessoasMobilizadas"
+                              name="Pessoas Sensibilizadas (Eixo Dir.)"
+                              stroke="#e11d48"
+                              strokeWidth={3}
+                              dot={{ r: 4, fill: '#e11d48' }}
+                            />
+                          </ComposedChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+                      <span>Relação entre esforço documental e pessoas abordadas</span>
+                      <span className="font-mono font-semibold text-indigo-700">
+                        {composedPerformanceData.length} Entidades
+                      </span>
                     </div>
                   </div>
                 </div>

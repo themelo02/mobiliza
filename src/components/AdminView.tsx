@@ -66,6 +66,7 @@ import {
   Filter,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   ChevronDown,
   ChevronUp,
   Home,
@@ -117,6 +118,7 @@ export const AdminView: React.FC = () => {
     updateSubmissao,
     updateSubmissaoStatus,
     deleteSubmissao,
+    deleteMultipleSubmissoes,
     clearAllSubmissoes,
     clearAllSupervisores,
     clearAllData,
@@ -250,6 +252,35 @@ export const AdminView: React.FC = () => {
   const [isSavingAdminEdit, setIsSavingAdminEdit] = useState<boolean>(false);
   const [adminEditSuccessMsg, setAdminEditSuccessMsg] = useState<string>('');
   const [adminEditErrorMsg, setAdminEditErrorMsg] = useState<string>('');
+
+  // Estados para Gestão e Eliminação de Duplicações de Fichas por Dia e por Supervisor
+  const [showDuplicatesModal, setShowDuplicatesModal] = useState<boolean>(false);
+  const [duplicateFilterSupervisor, setDuplicateFilterSupervisor] = useState<string>('todos');
+  const [duplicateFilterData, setDuplicateFilterData] = useState<string>('todas');
+  const [duplicateSearchTerm, setDuplicateSearchTerm] = useState<string>('');
+  const [subToDelete, setSubToDelete] = useState<Submissao | null>(null);
+  const [isDeletingSub, setIsDeletingSub] = useState<boolean>(false);
+  const [isDeletingDuplicatesBatch, setIsDeletingDuplicatesBatch] = useState<boolean>(false);
+  const [duplicateToast, setDuplicateToast] = useState<string>('');
+
+  // Estados para Gráficos Recharts das 8 Categorias de Mobilização
+  const [categoriaChartMetric, setCategoriaChartMetric] = useState<'pessoas' | 'locais' | 'comparativo' | 'eficiencia'>('pessoas');
+  const [categoriaChartType, setCategoriaChartType] = useState<'barras' | 'pizza'>('barras');
+
+  // ==============================================================
+  // ESTADOS DE FILTROS GLOBAIS DE DATA (PERÍODOS) E ZONA (LOCAIS DE INTERVENÇÃO)
+  // Permite ao administrador filtrar o progresso das atividades por períodos
+  // específicos (ex: mensal, semanal, diário) ou por locais de intervenção.
+  // ==============================================================
+  const [filtroPeriodo, setFiltroPeriodo] = useState<'todos' | 'hoje' | 'ontem' | 'semana' | 'quinzena' | 'mes' | 'personalizado'>('todos');
+  const [filtroDataInicio, setFiltroDataInicio] = useState<string>('');
+  const [filtroDataFim, setFiltroDataFim] = useState<string>('');
+  const [filtroZonaCoordenacao, setFiltroZonaCoordenacao] = useState<string>('todas');
+  const [filtroZonaComuna, setFiltroZonaComuna] = useState<string>('todas');
+  const [filtroZonaBairro, setFiltroZonaBairro] = useState<string>('todos');
+  const [filtroPontoCategoria, setFiltroPontoCategoria] = useState<string>('todas');
+  const [filtroSupervisorGeral, setFiltroSupervisorGeral] = useState<string>('todos');
+  const [isFiltersPanelOpen, setIsFiltersPanelOpen] = useState<boolean>(true);
 
   const handleStartAdminEditSub = (sub: Submissao) => {
     setEditingSubByAdmin(sub);
@@ -541,6 +572,328 @@ export const AdminView: React.FC = () => {
   }, [submissoes]);
 
   // ==============================================================
+  // DETECÇÃO INTELIGENTE DE DUPLICAÇÃO DE DADOS POR DIA E SUPERVISOR
+  // Identifica supervisores que submeteram a mesma ficha mais de uma
+  // vez no mesmo dia de trabalho, permitindo a eliminação segura.
+  // ==============================================================
+  const duplicateDetection = useMemo(() => {
+    const mapa = new Map<string, Submissao[]>();
+    submissoes.forEach((sub) => {
+      const key = `${sub.supervisorId}_${sub.data}`;
+      if (!mapa.has(key)) {
+        mapa.set(key, []);
+      }
+      mapa.get(key)!.push(sub);
+    });
+
+    const groups: {
+      key: string;
+      supervisorId: string;
+      supervisorNome: string;
+      data: string;
+      diaCampanha?: number;
+      submissoes: Submissao[];
+      isExactDuplicate: boolean;
+      excessCount: number;
+      duplicatedPessoasSim: number;
+      duplicatedFichasCount: number;
+    }[] = [];
+
+    const duplicateSubIds = new Set<string>();
+
+    mapa.forEach((list, key) => {
+      if (list.length > 1) {
+        const sorted = [...list].sort((a, b) => {
+          const timeA = a.dataEnvio ? new Date(a.dataEnvio).getTime() : 0;
+          const timeB = b.dataEnvio ? new Date(b.dataEnvio).getTime() : 0;
+          return timeA - timeB;
+        });
+
+        const first = sorted[0];
+        const firstBairros = (first.fichas || []).map((f) => f.bairro.toLowerCase().trim()).sort().join(',');
+
+        let isExact = false;
+        let excessPessoas = 0;
+        let excessFichas = 0;
+
+        sorted.slice(1).forEach((sub) => {
+          duplicateSubIds.add(sub.id);
+          excessPessoas += sub.totalSim;
+          excessFichas += (sub.fichas ? sub.fichas.length : 1);
+          const subBairros = (sub.fichas || []).map((f) => f.bairro.toLowerCase().trim()).sort().join(',');
+          if (sub.totalSim === first.totalSim || subBairros === firstBairros) {
+            isExact = true;
+          }
+        });
+
+        groups.push({
+          key,
+          supervisorId: first.supervisorId,
+          supervisorNome: first.supervisorNome,
+          data: first.data,
+          diaCampanha: first.diaCampanha,
+          submissoes: sorted,
+          isExactDuplicate: isExact,
+          excessCount: sorted.length - 1,
+          duplicatedPessoasSim: excessPessoas,
+          duplicatedFichasCount: excessFichas,
+        });
+      }
+    });
+
+    groups.sort((a, b) => b.submissoes.length - a.submissoes.length || b.data.localeCompare(a.data));
+
+    const totalExcessCount = groups.reduce((acc, g) => acc + g.excessCount, 0);
+    const totalDuplicatePessoas = groups.reduce((acc, g) => acc + g.duplicatedPessoasSim, 0);
+    const totalDuplicateFichas = groups.reduce((acc, g) => acc + g.duplicatedFichasCount, 0);
+
+    return {
+      groups,
+      duplicateSubIds,
+      totalGroups: groups.length,
+      totalExcessCount,
+      totalDuplicatePessoas,
+      totalDuplicateFichas,
+    };
+  }, [submissoes]);
+
+  const datasComDuplicados = useMemo(() => {
+    const dates = new Set<string>();
+    duplicateDetection.groups.forEach((g) => dates.add(g.data));
+    return Array.from(dates).sort().reverse();
+  }, [duplicateDetection.groups]);
+
+  const supervisoresComDuplicados = useMemo(() => {
+    const sups = new Map<string, string>();
+    duplicateDetection.groups.forEach((g) => sups.set(g.supervisorId, g.supervisorNome));
+    return Array.from(sups.entries()).map(([id, nome]) => ({ id, nome }));
+  }, [duplicateDetection.groups]);
+
+  const filteredDuplicateGroups = useMemo(() => {
+    return duplicateDetection.groups.filter((g) => {
+      if (duplicateFilterSupervisor !== 'todos' && g.supervisorId !== duplicateFilterSupervisor) {
+        return false;
+      }
+      if (duplicateFilterData !== 'todas' && g.data !== duplicateFilterData) {
+        return false;
+      }
+      if (duplicateSearchTerm.trim()) {
+        const term = duplicateSearchTerm.toLowerCase();
+        const matchSup = g.supervisorNome.toLowerCase().includes(term);
+        const matchData = g.data.includes(term);
+        const matchBairros = g.submissoes.some((s) =>
+          (s.fichas || []).some((f) => (f.bairro || '').toLowerCase().includes(term))
+        );
+        return matchSup || matchData || matchBairros;
+      }
+      return true;
+    });
+  }, [duplicateDetection.groups, duplicateFilterSupervisor, duplicateFilterData, duplicateSearchTerm]);
+
+  // ==============================================================
+  // MOTOR DE FILTRAGEM AVANÇADA POR DATA (PERÍODOS) E ZONA (LOCAIS DE INTERVENÇÃO)
+  // ==============================================================
+
+  // 1. Lista de todos os bairros e locais de intervenção (recolhidos de fichas e coordenações)
+  const listaBairrosIntervencao = useMemo(() => {
+    const bairrosSet = new Set<string>();
+    submissoes.forEach((s) => {
+      (s.fichas || []).forEach((f) => {
+        if (f.bairro && f.bairro.trim()) {
+          bairrosSet.add(f.bairro.trim());
+        }
+      });
+    });
+    coordenacoes.forEach((c) => {
+      (c.bairros || []).forEach((b) => {
+        if (b && b.trim()) {
+          bairrosSet.add(b.trim());
+        }
+      });
+    });
+    if (bairrosSet.size === 0) {
+      ['Chingo', 'Litoral', 'Bairro Novo', 'Assaca', 'Pindo', 'Calafate', 'E15', 'Quicombo', 'Sede'].forEach((b) => bairrosSet.add(b));
+    }
+    return Array.from(bairrosSet).sort((a, b) => a.localeCompare(b, 'pt'));
+  }, [submissoes, coordenacoes]);
+
+  // 2. Datas de referência para períodos automáticos (Hoje, Ontem, Semana, Quinzena, Mês)
+  const dateRangeFilter = useMemo(() => {
+    const now = new Date();
+    const formatYMD = (d: Date) => d.toISOString().split('T')[0];
+
+    const hoje = formatYMD(now);
+
+    const ontemDate = new Date(now);
+    ontemDate.setDate(now.getDate() - 1);
+    const ontem = formatYMD(ontemDate);
+
+    const semanaDate = new Date(now);
+    semanaDate.setDate(now.getDate() - 7);
+    const semanaAtras = formatYMD(semanaDate);
+
+    const quinzenaDate = new Date(now);
+    quinzenaDate.setDate(now.getDate() - 15);
+    const quinzenaAtras = formatYMD(quinzenaDate);
+
+    const mesDate = new Date(now);
+    mesDate.setDate(now.getDate() - 30);
+    const mesAtras = formatYMD(mesDate);
+
+    return {
+      hoje,
+      ontem,
+      semanaAtras,
+      quinzenaAtras,
+      mesAtras,
+    };
+  }, []);
+
+  // 3. Submissões filtradas ativas para o Dashboard e Relatórios
+  const submissoesAtivas = useMemo(() => {
+    return submissoes
+      .map((sub) => {
+        // A. FILTRO DE DATA / PERÍODO ESPECÍFICO
+        if (filtroPeriodo === 'hoje') {
+          if (sub.data !== dateRangeFilter.hoje) return null;
+        } else if (filtroPeriodo === 'ontem') {
+          if (sub.data !== dateRangeFilter.ontem) return null;
+        } else if (filtroPeriodo === 'semana') {
+          if (sub.data < dateRangeFilter.semanaAtras || sub.data > dateRangeFilter.hoje) return null;
+        } else if (filtroPeriodo === 'quinzena') {
+          if (sub.data < dateRangeFilter.quinzenaAtras || sub.data > dateRangeFilter.hoje) return null;
+        } else if (filtroPeriodo === 'mes') {
+          if (sub.data < dateRangeFilter.mesAtras || sub.data > dateRangeFilter.hoje) return null;
+        } else if (filtroPeriodo === 'personalizado') {
+          if (filtroDataInicio && sub.data < filtroDataInicio) return null;
+          if (filtroDataFim && sub.data > filtroDataFim) return null;
+        }
+
+        // B. FILTRO DE SUPERVISOR ESPECÍFICO
+        if (filtroSupervisorGeral !== 'todos' && sub.supervisorId !== filtroSupervisorGeral) {
+          return null;
+        }
+
+        // C. FILTRO DE ZONA / COORDENAÇÃO
+        if (filtroZonaCoordenacao !== 'todas') {
+          const sup = supervisores.find((s) => s.id === sub.supervisorId);
+          const coord = coordenacoes.find((c) => c.id === filtroZonaCoordenacao);
+          if (!sup || !coord) return null;
+          const matchesCoord =
+            (coord.supervisorIds && coord.supervisorIds.includes(sup.id)) ||
+            sup.coordenacaoId === coord.id ||
+            (coord.nome && sup.coordenacao && sup.coordenacao.toLowerCase().trim() === coord.nome.toLowerCase().trim());
+          if (!matchesCoord) return null;
+        }
+
+        // D. FILTRO DE FICHAS: ZONA (COMUNA, BAIRRO) E CATEGORIA DE PONTO
+        let matchingFichas = sub.fichas || [];
+
+        if (filtroZonaComuna !== 'todas') {
+          matchingFichas = matchingFichas.filter(
+            (f) => f.comuna && f.comuna.toLowerCase().trim() === filtroZonaComuna.toLowerCase().trim()
+          );
+        }
+
+        if (filtroZonaBairro !== 'todos') {
+          matchingFichas = matchingFichas.filter(
+            (f) => f.bairro && f.bairro.toLowerCase().trim() === filtroZonaBairro.toLowerCase().trim()
+          );
+        }
+
+        if (filtroPontoCategoria !== 'todas') {
+          const k = filtroPontoCategoria;
+          matchingFichas = matchingFichas.filter((f: any) => {
+            const l = Number(f[`${k}_locais`]) || 0;
+            const p = Number(f[`${k}_pessoas`]) || 0;
+            return l > 0 || p > 0;
+          });
+        }
+
+        if (matchingFichas.length === 0 && (sub.fichas || []).length > 0) {
+          return null;
+        }
+
+        // Se filtrou por bairro ou ponto, recalcular os totais da submissão com base nas fichas correspondentes
+        if (matchingFichas.length !== (sub.fichas || []).length) {
+          const tSim = matchingFichas.reduce((acc, f) => acc + (Number(f.total_sim) || 0), 0);
+          const tNao = matchingFichas.reduce((acc, f) => acc + (Number(f.total_nao) || 0), 0);
+          const tLocais = matchingFichas.reduce((acc, f) => {
+            return (
+              acc +
+              (Number(f.casa_locais) || 0) +
+              (Number(f.igrejas_locais) || 0) +
+              (Number(f.pracas_locais) || 0) +
+              (Number(f.paragem_locais) || 0) +
+              (Number(f.creches_locais) || 0) +
+              (Number(f.escolas_locais) || 0) +
+              (Number(f.agua_locais) || 0) +
+              (Number(f.outros_locais) || 0)
+            );
+          }, 0);
+
+          return {
+            ...sub,
+            fichas: matchingFichas,
+            totalSim: tSim,
+            totalNao: tNao,
+            totalPessoas: tSim + tNao,
+            totalLocais: tLocais,
+          };
+        }
+
+        return sub;
+      })
+      .filter((s): s is Submissao => s !== null);
+  }, [
+    submissoes,
+    supervisores,
+    coordenacoes,
+    filtroPeriodo,
+    filtroDataInicio,
+    filtroDataFim,
+    dateRangeFilter,
+    filtroSupervisorGeral,
+    filtroZonaCoordenacao,
+    filtroZonaComuna,
+    filtroZonaBairro,
+    filtroPontoCategoria,
+  ]);
+
+  const isAnyFilterActive = useMemo(() => {
+    return (
+      filtroPeriodo !== 'todos' ||
+      filtroZonaCoordenacao !== 'todas' ||
+      filtroZonaComuna !== 'todas' ||
+      filtroZonaBairro !== 'todos' ||
+      filtroPontoCategoria !== 'todas' ||
+      filtroSupervisorGeral !== 'todos' ||
+      Boolean(filtroDataInicio) ||
+      Boolean(filtroDataFim)
+    );
+  }, [
+    filtroPeriodo,
+    filtroZonaCoordenacao,
+    filtroZonaComuna,
+    filtroZonaBairro,
+    filtroPontoCategoria,
+    filtroSupervisorGeral,
+    filtroDataInicio,
+    filtroDataFim,
+  ]);
+
+  const handleResetFilters = () => {
+    setFiltroPeriodo('todos');
+    setFiltroDataInicio('');
+    setFiltroDataFim('');
+    setFiltroZonaCoordenacao('todas');
+    setFiltroZonaComuna('todas');
+    setFiltroZonaBairro('todos');
+    setFiltroPontoCategoria('todas');
+    setFiltroSupervisorGeral('todos');
+  };
+
+  // ==============================================================
   // CAMADA LÓGICA AUTOMATIZADA (AUTOMATED FICHA PLANNING LOGIC LAYER)
   // Calcula o total requerido de fichas por supervisor com base nos dias
   // de trabalho escolhidos e na meta diária de cada supervisor, gerando
@@ -567,7 +920,7 @@ export const AdminView: React.FC = () => {
     };
 
     const supervisoresCalculados = supervisores.map((sup) => {
-      const supSubs = submissoes.filter((s) => s.supervisorId === sup.id);
+      const supSubs = submissoesAtivas.filter((s) => s.supervisorId === sup.id);
       const diasTrabalho = Math.max(1, Number(sup.diasTrabalhoPrevistos) || 5);
 
       // Reconhecer e honrar com precisão as informações reais com que o supervisor foi lançado
@@ -892,20 +1245,138 @@ export const AdminView: React.FC = () => {
       progressoGeralStr: `${progressoGeralPct.toFixed(1)}%`,
       mediaDiasCampanha,
     };
-  }, [supervisores, submissoes, coordenacoes]);
+  }, [supervisores, submissoesAtivas, coordenacoes]);
+
+  // ==============================================================
+  // DADOS RECHARTS: PROGRESSO DAS ATIVIDADES DE MOBILIZAÇÃO POR CATEGORIA
+  // Gráficos interativos para visualizar o desempenho das 8 categorias:
+  // Casas, Igrejas, Praças, Paragens, Creches, Escolas, Água e Outros
+  // ==============================================================
+  const categoriaRechartsData = useMemo(() => {
+    const cat = automatedFichaPlanning.categoriasTotaisGeral;
+    const baseItems = [
+      {
+        id: 'casa',
+        categoria: 'Casas',
+        nomeCompleto: 'Casas / Residências',
+        descricao: 'Visitas domiciliares porta a porta',
+        locais: cat.casa.locais || 0,
+        pessoas: cat.casa.pessoas || 0,
+        corPessoas: '#2563eb', // Azul Royal
+        corLocais: '#93c5fd', // Azul Claro
+      },
+      {
+        id: 'igrejas',
+        categoria: 'Igrejas',
+        nomeCompleto: 'Igrejas / Cultos',
+        descricao: 'Comunidades religiosas e templos',
+        locais: cat.igrejas.locais || 0,
+        pessoas: cat.igrejas.pessoas || 0,
+        corPessoas: '#7c3aed', // Roxo
+        corLocais: '#c4b5fd',
+      },
+      {
+        id: 'pracas',
+        categoria: 'Praças / Mercados',
+        nomeCompleto: 'Mercados & Praças',
+        descricao: 'Feiras e centros de comércio informal',
+        locais: cat.pracas.locais || 0,
+        pessoas: cat.pracas.pessoas || 0,
+        corPessoas: '#d97706', // Âmbar
+        corLocais: '#fcd34d',
+      },
+      {
+        id: 'paragem',
+        categoria: 'Paragens Táxi',
+        nomeCompleto: 'Paragens de Táxi / Mototáxis',
+        descricao: 'Terminais de transportes e mototáxis',
+        locais: cat.paragem.locais || 0,
+        pessoas: cat.paragem.pessoas || 0,
+        corPessoas: '#059669', // Verde Esmeralda
+        corLocais: '#6ee7b7',
+      },
+      {
+        id: 'creches',
+        categoria: 'Creches',
+        nomeCompleto: 'Creches & Infantários',
+        descricao: 'Centros infantis e berçários',
+        locais: cat.creches.locais || 0,
+        pessoas: cat.creches.pessoas || 0,
+        corPessoas: '#e11d48', // Rosa / Vermelho
+        corLocais: '#fda4af',
+      },
+      {
+        id: 'escolas',
+        categoria: 'Escolas',
+        nomeCompleto: 'Escolas & Ensino',
+        descricao: 'Colégios e escolas primárias/secundárias',
+        locais: cat.escolas.locais || 0,
+        pessoas: cat.escolas.pessoas || 0,
+        corPessoas: '#0284c7', // Azul Céu
+        corLocais: '#7dd3fc',
+      },
+      {
+        id: 'agua',
+        categoria: 'Pontos de Água',
+        nomeCompleto: 'Pontos de Água / Chafarizes',
+        descricao: 'Chafarizes públicos e reservatórios',
+        locais: cat.agua.locais || 0,
+        pessoas: cat.agua.pessoas || 0,
+        corPessoas: '#0d9488', // Verde Azulado
+        corLocais: '#5eead4',
+      },
+      {
+        id: 'outros',
+        categoria: 'Outros Locais',
+        nomeCompleto: 'Outros Locais Comunitários',
+        descricao: 'Espaços públicos e pontos de encontro',
+        locais: cat.outros.locais || 0,
+        pessoas: cat.outros.pessoas || 0,
+        corPessoas: '#475569', // Ardósia
+        corLocais: '#cbd5e1',
+      },
+    ];
+
+    const totalPessoas = baseItems.reduce((acc, i) => acc + i.pessoas, 0);
+    const totalLocais = baseItems.reduce((acc, i) => acc + i.locais, 0);
+
+    const items = baseItems.map((item) => {
+      const pctPessoas = totalPessoas > 0 ? (item.pessoas / totalPessoas) * 100 : 0;
+      const pctLocais = totalLocais > 0 ? (item.locais / totalLocais) * 100 : 0;
+      const mediaPorLocal = item.locais > 0 ? Number((item.pessoas / item.locais).toFixed(1)) : 0;
+
+      return {
+        ...item,
+        name: item.categoria,
+        value: categoriaChartMetric === 'locais' ? item.locais : item.pessoas,
+        percentPessoas: Number(pctPessoas.toFixed(1)),
+        percentPessoasStr: `${pctPessoas.toFixed(1)}%`,
+        percentLocais: Number(pctLocais.toFixed(1)),
+        percentLocaisStr: `${pctLocais.toFixed(1)}%`,
+        mediaPorLocal,
+      };
+    });
+
+    return {
+      items,
+      totalPessoas,
+      totalLocais,
+      mediaGeral: totalLocais > 0 ? (totalPessoas / totalLocais).toFixed(1) : '0.0',
+    };
+  }, [automatedFichaPlanning.categoriasTotaisGeral, categoriaChartMetric]);
 
   // Recharts Chart Data: Atividades e Locais por Supervisor
   const supervisorChartData = useMemo(() => {
     return supervisores.map((sup) => {
-      const supSubmissions = submissoes.filter((s) => s.supervisorId === sup.id);
+      const supSubmissions = submissoesAtivas.filter((s) => s.supervisorId === sup.id);
       let totalAtividades = 0;
       let totalPessoas = 0;
       let totalLocais = 0;
 
       supSubmissions.forEach((sub) => {
-        totalAtividades += sub.fichas.length;
-        totalPessoas += sub.totalSim;
-        totalLocais += sub.totalLocais;
+        totalAtividades += sub.fichas ? sub.fichas.length : 1;
+        totalPessoas += Number(sub.totalSim) || 0;
+        totalLocais += Number(sub.totalLocais) || 0;
       });
 
       return {
@@ -918,7 +1389,7 @@ export const AdminView: React.FC = () => {
         locais: totalLocais,
       };
     });
-  }, [supervisores, submissoes]);
+  }, [supervisores, submissoesAtivas]);
 
   const [supervisorPieMetric, setSupervisorPieMetric] = useState<'atividades' | 'pessoas'>('atividades');
 
@@ -972,14 +1443,14 @@ export const AdminView: React.FC = () => {
       comunaStats[c] = { pessoas: 0, fichas: 0 };
     });
 
-    submissoes.forEach((sub) => {
+    submissoesAtivas.forEach((sub) => {
       totalPessoas += sub.totalPessoas;
       totalLocais += sub.totalLocais;
       totalSim += sub.totalSim;
       totalNao += sub.totalNao;
-      totalFichas += sub.fichas.length;
+      totalFichas += (sub.fichas ? sub.fichas.length : 1);
 
-      sub.fichas.forEach((f) => {
+      (sub.fichas || []).forEach((f) => {
         categoryBreakdown.casa.locais += Number(f.casa_locais) || 0;
         categoryBreakdown.casa.pessoas += Number(f.casa_pessoas) || 0;
 
@@ -1028,7 +1499,7 @@ export const AdminView: React.FC = () => {
       categoryBreakdown,
       comunaStats,
     };
-  }, [submissoes]);
+  }, [submissoesAtivas]);
 
   // Recharts Pie Chart Data: Percentagens por Comuna (Apenas Sede)
   const comunaPieData = useMemo(() => {
@@ -1089,7 +1560,7 @@ export const AdminView: React.FC = () => {
   // Acceptance vs Rejection by Supervisor
   const supervisorAcceptanceData = useMemo(() => {
     return supervisores.map((sup) => {
-      const supSubs = submissoes.filter((s) => s.supervisorId === sup.id);
+      const supSubs = submissoesAtivas.filter((s) => s.supervisorId === sup.id);
       let sim = 0;
       let nao = 0;
       supSubs.forEach((s) => {
@@ -1113,13 +1584,13 @@ export const AdminView: React.FC = () => {
         taxaNaoStr: `${taxaNao.toFixed(1)}%`,
       };
     });
-  }, [supervisores, submissoes]);
+  }, [supervisores, submissoesAtivas]);
 
   // Acceptance vs Rejection by Bairro
   const bairroAcceptanceData = useMemo(() => {
     const bMap: Record<string, { sim: number; nao: number }> = {};
-    submissoes.forEach((sub) => {
-      sub.fichas.forEach((f) => {
+    submissoesAtivas.forEach((sub) => {
+      (sub.fichas || []).forEach((f) => {
         const b = f.bairro?.trim() || 'Outro';
         if (!bMap[b]) bMap[b] = { sim: 0, nao: 0 };
         bMap[b].sim += Number(f.total_sim) || 0;
@@ -1146,13 +1617,13 @@ export const AdminView: React.FC = () => {
         };
       })
       .sort((a, b) => b.total - a.total);
-  }, [submissoes]);
+  }, [submissoesAtivas]);
 
   // Daily Tracking and Analytics (Separação de Fichas por Dia & Cumprimento de Metas)
   const dailyAnalytics = useMemo(() => {
     // 1. Extrair todas as datas únicas ordenadas cronologicamente
     const datesSet = new Set<string>();
-    submissoes.forEach((sub) => {
+    submissoesAtivas.forEach((sub) => {
       if (sub.data) datesSet.add(sub.data);
     });
     // Se não houver submissões, manter datas de exemplo
@@ -1175,7 +1646,7 @@ export const AdminView: React.FC = () => {
 
     // 2. Matriz de desempenho por supervisor
     const supervisorMatrix = supervisores.map((sup) => {
-      const supSubs = submissoes.filter((s) => s.supervisorId === sup.id);
+      const supSubs = submissoesAtivas.filter((s) => s.supervisorId === sup.id);
       const diasPrevistos = Math.max(1, Number(sup.diasTrabalhoPrevistos) || 5);
       const totalPrevisto =
         sup.totalFichasPrevistas !== undefined && Number(sup.totalFichasPrevistas) > 0
@@ -1238,7 +1709,7 @@ export const AdminView: React.FC = () => {
       const supIds = assignedSups.map((s) => s.id);
 
       // Submissões pertencentes a esses supervisores
-      const coordSubs = submissoes.filter((s) => supIds.includes(s.supervisorId));
+      const coordSubs = submissoesAtivas.filter((s) => supIds.includes(s.supervisorId));
 
       const totalPrevisto =
         assignedSups.length > 0
@@ -1338,7 +1809,7 @@ export const AdminView: React.FC = () => {
       totalGeralLancado,
       taxaGlobalCumprimento: Number(taxaGlobalCumprimento.toFixed(1)),
     };
-  }, [supervisores, submissoes, coordenacoes]);
+  }, [supervisores, submissoesAtivas, coordenacoes]);
 
   // Submissões filtradas para o Explorador de Fichas por Dia (Supervisores & Coordenações)
   const filteredSubmissoesDiario = useMemo(() => {
@@ -1860,6 +2331,68 @@ export const AdminView: React.FC = () => {
     });
   };
 
+  // ==============================================================
+  // AÇÕES DE ELIMINAÇÃO DE DUPLICAÇÃO DE DADOS POR DIA E SUPERVISOR
+  // ==============================================================
+  const handleConfirmDeleteSubmission = async (sub: Submissao) => {
+    setIsDeletingSub(true);
+    try {
+      await deleteSubmissao(sub.id);
+      setSubToDelete(null);
+      setDuplicateToast(`Ficha de ${sub.supervisorNome} eliminada com sucesso! Métricas atualizadas.`);
+      setTimeout(() => setDuplicateToast(''), 4500);
+    } catch (err) {
+      alert('Erro ao eliminar a ficha. Por favor, tente novamente.');
+    } finally {
+      setIsDeletingSub(false);
+    }
+  };
+
+  const handleDeleteDuplicatesInGroup = async (group: { supervisorNome: string; data: string; submissoes: Submissao[] }) => {
+    if (group.submissoes.length <= 1) return;
+    const copiesToDelete = group.submissoes.slice(1);
+    const ids = copiesToDelete.map((s) => s.id);
+    const confirmMsg = `Eliminar ${ids.length} cópia(s) duplicada(s) de ${group.supervisorNome} na data ${group.data}?\n\nO 1º registo original será preservado e as cópias duplicadas serão removidas do Firebase.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setIsDeletingDuplicatesBatch(true);
+    try {
+      await deleteMultipleSubmissoes(ids);
+      setDuplicateToast(`Eliminadas ${ids.length} cópias duplicadas de ${group.supervisorNome}. Ficha original mantida.`);
+      setTimeout(() => setDuplicateToast(''), 4500);
+    } catch (err) {
+      alert('Erro ao eliminar as cópias duplicadas. Tente novamente.');
+    } finally {
+      setIsDeletingDuplicatesBatch(false);
+    }
+  };
+
+  const handleDeleteAllFilteredDuplicates = async () => {
+    const allCopiesToDelete: string[] = [];
+    filteredDuplicateGroups.forEach((g) => {
+      g.submissoes.slice(1).forEach((s) => allCopiesToDelete.push(s.id));
+    });
+
+    if (allCopiesToDelete.length === 0) {
+      alert('Nenhuma cópia duplicada encontrada para os filtros atuais.');
+      return;
+    }
+
+    const confirmMsg = `ATENÇÃO: Deseja eliminar ${allCopiesToDelete.length} ficha(s) duplicada(s) detetada(s) nos filtros selecionados?\n\nO sistema manterá exatamente o 1º registo original de cada supervisor/dia e eliminará todas as réplicas excedentes do Firebase.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setIsDeletingDuplicatesBatch(true);
+    try {
+      await deleteMultipleSubmissoes(allCopiesToDelete);
+      setDuplicateToast(`Limpeza concluída com sucesso! ${allCopiesToDelete.length} fichas duplicadas foram eliminadas.`);
+      setTimeout(() => setDuplicateToast(''), 5000);
+    } catch (err) {
+      alert('Erro ao executar a limpeza em lote. Tente novamente.');
+    } finally {
+      setIsDeletingDuplicatesBatch(false);
+    }
+  };
+
   return (
     <div id="admin-view" className="flex flex-col md:flex-row min-h-screen md:h-screen bg-[#f1f5f9] md:overflow-hidden">
       {/* ============================================================== */}
@@ -2378,15 +2911,537 @@ export const AdminView: React.FC = () => {
             >
               Relatórios ({submissoes.length})
             </button>
+            {!isReadOnly && (
+              <button
+                type="button"
+                onClick={() => setShowDuplicatesModal(true)}
+                className={`px-3 py-1 rounded-md font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 ${
+                  duplicateDetection.totalExcessCount > 0
+                    ? 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 animate-pulse'
+                    : 'text-slate-600 hover:bg-slate-100'
+                }`}
+                title="Gestão e eliminação de fichas duplicadas por dia e supervisor"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-amber-600" />
+                <span>
+                  Eliminar Duplicados
+                  {duplicateDetection.totalExcessCount > 0 && (
+                    <span className="ml-1 bg-amber-600 text-white text-[10px] px-1.5 py-0.2 rounded-full font-black">
+                      {duplicateDetection.totalExcessCount}
+                    </span>
+                  )}
+                </span>
+              </button>
+            )}
           </div>
         </header>
 
         <div className="p-4 sm:p-6 max-w-7xl w-full mx-auto space-y-6">
+          {/* TOAST FLUTUANTE DE FEEDBACK DE LIMPEZA DE DUPLICADOS */}
+          {duplicateToast && (
+            <div className="bg-emerald-600 text-white px-4 py-3 rounded-xl shadow-lg flex items-center justify-between text-xs font-semibold animate-in fade-in slide-in-from-top-2">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4" />
+                <span>{duplicateToast}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDuplicateToast('')}
+                className="text-emerald-100 hover:text-white p-1 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
+          {/* BANNER DE ALERTA PROEMINENTE QUANDO DETETADA DUPLICAÇÃO DE DADOS */}
+          {duplicateDetection.totalExcessCount > 0 && !isReadOnly && (
+            <div className="bg-gradient-to-r from-amber-500/10 via-amber-50 to-orange-500/10 border-2 border-amber-400 p-4 rounded-2xl shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-xs">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-amber-950 text-sm flex items-center gap-2">
+                    <span>Duplicação de Fichas Detectada no Sumbe!</span>
+                    <span className="bg-amber-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full uppercase">
+                      {duplicateDetection.totalExcessCount} réplica(s)
+                    </span>
+                  </h4>
+                  <p className="text-xs text-amber-900 mt-0.5 leading-relaxed">
+                    Identificámos <strong>{duplicateDetection.totalExcessCount} ficha(s) lançada(s) mais de uma vez</strong> no mesmo dia por <strong>{supervisoresComDuplicados.length} supervisor(es)</strong> ({supervisoresComDuplicados.map((s) => s.nome).join(', ')}). Isto pode inflacionar as pessoas mobilizadas em <strong>+{duplicateDetection.totalDuplicatePessoas.toLocaleString('pt-PT')}</strong>.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                <button
+                  type="button"
+                  onClick={() => setShowDuplicatesModal(true)}
+                  className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>Eliminar Réplicas Agora</span>
+                </button>
+              </div>
+            </div>
+          )}
           {/* ============================================================== */}
           {/* TAB 1: DASHBOARD */}
           {/* ============================================================== */}
           {activeTab === 'dashboard' && (
             <div className="space-y-6">
+              {/* ============================================================== */}
+              {/* PAINEL DE FILTROS AVANÇADOS: DATA (PERÍODOS) E ZONA (LOCAIS DE INTERVENÇÃO) */}
+              {/* ============================================================== */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden transition-all duration-300">
+                {/* Cabeçalho do Painel de Filtros */}
+                <div className="p-4 sm:p-5 bg-gradient-to-r from-slate-50 via-white to-blue-50/40 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  <div className="flex items-start sm:items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-blue-100/80 text-[#2667ff] flex items-center justify-center shrink-0 shadow-2xs">
+                      <Filter className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="font-extrabold text-slate-900 text-base">
+                          Filtros de Período & Zona de Intervenção
+                        </h3>
+                        {isAnyFilterActive ? (
+                          <span className="bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[11px] px-2.5 py-0.5 rounded-full flex items-center gap-1.5 shadow-2xs">
+                            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                            <span>Filtro Ativo: {submissoesAtivas.length} de {submissoes.length} envios</span>
+                          </span>
+                        ) : (
+                          <span className="bg-blue-50 text-[#1a53db] border border-blue-200 font-semibold text-[11px] px-2.5 py-0.5 rounded-full">
+                            Visualização Global (Todos os Registos)
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Filtre instantaneamente os gráficos Recharts, KPIs e relatórios por períodos específicos (mensal, semanal, diário) ou por locais de intervenção.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 self-start sm:self-auto">
+                    {isAnyFilterActive && (
+                      <button
+                        type="button"
+                        onClick={handleResetFilters}
+                        className="bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
+                        title="Restaurar visualização geral da campanha"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5 text-amber-700" />
+                        <span>Limpar Filtros</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setIsFiltersPanelOpen(!isFiltersPanelOpen)}
+                      className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer"
+                    >
+                      <Sliders className="w-3.5 h-3.5 text-slate-500" />
+                      <span>{isFiltersPanelOpen ? 'Recolher Painel' : 'Expandir Filtros'}</span>
+                      {isFiltersPanelOpen ? (
+                        <ChevronUp className="w-3.5 h-3.5 text-slate-400" />
+                      ) : (
+                        <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Conteúdo Expansível do Painel */}
+                {isFiltersPanelOpen && (
+                  <div className="p-4 sm:p-5 space-y-4">
+                    {/* 1. SELEÇÃO DE PERÍODO / DATA */}
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                          <Calendar className="w-4 h-4 text-[#2667ff]" />
+                          <span>1. Período Específico de Atividade</span>
+                        </label>
+                        <span className="text-[11px] text-slate-500">
+                          {filtroPeriodo === 'hoje' && `Hoje (${dateRangeFilter.hoje})`}
+                          {filtroPeriodo === 'ontem' && `Ontem (${dateRangeFilter.ontem})`}
+                          {filtroPeriodo === 'semana' && `Últimos 7 dias (${dateRangeFilter.semanaAtras} a ${dateRangeFilter.hoje})`}
+                          {filtroPeriodo === 'quinzena' && `Últimos 15 dias (${dateRangeFilter.quinzenaAtras} a ${dateRangeFilter.hoje})`}
+                          {filtroPeriodo === 'mes' && `Este Mês (${dateRangeFilter.mesAtras} a ${dateRangeFilter.hoje})`}
+                          {filtroPeriodo === 'personalizado' && 'Intervalo de datas personalizado'}
+                          {filtroPeriodo === 'todos' && 'Todo o período da campanha'}
+                        </span>
+                      </div>
+
+                      {/* Botões Rápidos de Período */}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setFiltroPeriodo('todos')}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center gap-1 ${
+                            filtroPeriodo === 'todos'
+                              ? 'bg-[#2667ff] text-white shadow-2xs'
+                              : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                          }`}
+                        >
+                          <CalendarDays className="w-3.5 h-3.5" />
+                          <span>Todo o Período</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setFiltroPeriodo('hoje')}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center gap-1 ${
+                            filtroPeriodo === 'hoje'
+                              ? 'bg-[#2667ff] text-white shadow-2xs'
+                              : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                          }`}
+                        >
+                          <span>Hoje</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setFiltroPeriodo('ontem')}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center gap-1 ${
+                            filtroPeriodo === 'ontem'
+                              ? 'bg-[#2667ff] text-white shadow-2xs'
+                              : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                          }`}
+                        >
+                          <span>Ontem</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setFiltroPeriodo('semana')}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center gap-1 ${
+                            filtroPeriodo === 'semana'
+                              ? 'bg-[#2667ff] text-white shadow-2xs'
+                              : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                          }`}
+                        >
+                          <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Esta Semana (7 dias)</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setFiltroPeriodo('quinzena')}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center gap-1 ${
+                            filtroPeriodo === 'quinzena'
+                              ? 'bg-[#2667ff] text-white shadow-2xs'
+                              : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                          }`}
+                        >
+                          <span>Últimos 15 Dias</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setFiltroPeriodo('mes')}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center gap-1 ${
+                            filtroPeriodo === 'mes'
+                              ? 'bg-[#2667ff] text-white shadow-2xs'
+                              : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                          }`}
+                        >
+                          <span>Este Mês (Mensal)</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setFiltroPeriodo('personalizado')}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center gap-1 ${
+                            filtroPeriodo === 'personalizado'
+                              ? 'bg-indigo-600 text-white shadow-2xs'
+                              : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                          }`}
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                          <span>Personalizado...</span>
+                        </button>
+                      </div>
+
+                      {/* Seletor de Intervalo Personalizado */}
+                      {filtroPeriodo === 'personalizado' && (
+                        <div className="mt-3 p-3 bg-indigo-50/60 border border-indigo-200 rounded-xl flex flex-wrap items-center gap-3 animate-in fade-in duration-200">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-indigo-950">Data Início:</span>
+                            <input
+                              type="date"
+                              value={filtroDataInicio}
+                              onChange={(e) => setFiltroDataInicio(e.target.value)}
+                              className="text-xs py-1.5 px-2.5 bg-white border border-indigo-300 rounded-lg text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500 outline-none"
+                            />
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-indigo-950">Data Fim:</span>
+                            <input
+                              type="date"
+                              value={filtroDataFim}
+                              onChange={(e) => setFiltroDataFim(e.target.value)}
+                              className="text-xs py-1.5 px-2.5 bg-white border border-indigo-300 rounded-lg text-slate-800 font-medium focus:ring-2 focus:ring-indigo-500 outline-none"
+                            />
+                          </div>
+
+                          {(filtroDataInicio || filtroDataFim) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setFiltroDataInicio('');
+                                setFiltroDataFim('');
+                              }}
+                              className="text-[11px] text-indigo-700 hover:text-indigo-900 underline font-semibold cursor-pointer"
+                            >
+                              Limpar datas
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 2. SELEÇÃO DE ZONA / LOCAIS DE INTERVENÇÃO */}
+                    <div className="pt-3 border-t border-slate-100">
+                      <label className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5 mb-2.5">
+                        <MapPin className="w-4 h-4 text-emerald-600" />
+                        <span>2. Zona & Locais de Intervenção Comunitária</span>
+                      </label>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                        {/* Dropdown 1: Coordenação */}
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-semibold text-slate-600 flex items-center gap-1">
+                            <Compass className="w-3.5 h-3.5 text-purple-600" />
+                            <span>Coordenação do Setor:</span>
+                          </label>
+                          <select
+                            value={filtroZonaCoordenacao}
+                            onChange={(e) => setFiltroZonaCoordenacao(e.target.value)}
+                            className="w-full text-xs py-2 px-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-medium focus:bg-white focus:ring-2 focus:ring-[#2667ff] outline-none"
+                          >
+                            <option value="todas">Todas as Coordenações ({coordenacoes.length})</option>
+                            {coordenacoes.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.nome} ({c.supervisorIds?.length || 0} sup)
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* Dropdown 2: Comuna */}
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-semibold text-slate-600 flex items-center gap-1">
+                            <Building className="w-3.5 h-3.5 text-blue-600" />
+                            <span>Comuna / Município:</span>
+                          </label>
+                          <select
+                            value={filtroZonaComuna}
+                            onChange={(e) => setFiltroZonaComuna(e.target.value)}
+                            className="w-full text-xs py-2 px-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-medium focus:bg-white focus:ring-2 focus:ring-[#2667ff] outline-none"
+                          >
+                            <option value="todas">Todas as Comunas</option>
+                            {COMUNAS_SUMBE.map((c) => (
+                              <option key={c} value={c}>
+                                {c}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* Dropdown 3: Local de Intervenção / Bairro */}
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-semibold text-slate-600 flex items-center gap-1">
+                            <MapPin className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Bairro / Local de Intervenção:</span>
+                          </label>
+                          <select
+                            value={filtroZonaBairro}
+                            onChange={(e) => setFiltroZonaBairro(e.target.value)}
+                            className="w-full text-xs py-2 px-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-medium focus:bg-white focus:ring-2 focus:ring-[#2667ff] outline-none"
+                          >
+                            <option value="todos">Todos os Bairros / Locais ({listaBairrosIntervencao.length})</option>
+                            {listaBairrosIntervencao.map((b) => (
+                              <option key={b} value={b}>
+                                Bairro {b}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* Dropdown 4: Categoria / Ponto de Intervenção */}
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-semibold text-slate-600 flex items-center gap-1">
+                            <Layers className="w-3.5 h-3.5 text-amber-600" />
+                            <span>Ponto / Categoria de Ação:</span>
+                          </label>
+                          <select
+                            value={filtroPontoCategoria}
+                            onChange={(e) => setFiltroPontoCategoria(e.target.value)}
+                            className="w-full text-xs py-2 px-2.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 font-medium focus:bg-white focus:ring-2 focus:ring-[#2667ff] outline-none"
+                          >
+                            <option value="todas">Todas as 8 Categorias</option>
+                            <option value="casa">1. Casas / Residências</option>
+                            <option value="igrejas">2. Igrejas / Cultos</option>
+                            <option value="pracas">3. Praças / Mercados</option>
+                            <option value="paragem">4. Paragens de Táxi / Mototáxis</option>
+                            <option value="creches">5. Creches & Infantários</option>
+                            <option value="escolas">6. Escolas & Ensino</option>
+                            <option value="agua">7. Pontos de Água / Chafarizes</option>
+                            <option value="outros">8. Outros Locais Comunitários</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Filtro Adicional: Supervisor */}
+                      <div className="mt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-semibold text-slate-600 flex items-center gap-1">
+                            <Users className="w-3.5 h-3.5 text-slate-500" />
+                            <span>Filtrar por Supervisor Específico:</span>
+                          </span>
+                          <select
+                            value={filtroSupervisorGeral}
+                            onChange={(e) => setFiltroSupervisorGeral(e.target.value)}
+                            className="text-xs py-1 px-2.5 bg-white border border-slate-300 rounded-lg text-slate-700 font-medium focus:ring-2 focus:ring-[#2667ff] outline-none"
+                          >
+                            <option value="todos">Todos os Supervisores ({supervisores.length})</option>
+                            {supervisores.map((s) => (
+                              <option key={s.id} value={s.id}>
+                                {s.nome} ({s.codigo})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 3. RESUMO DOS FILTROS ATIVOS & CHIPS DE CANCELAMENTO */}
+                    {isAnyFilterActive && (
+                      <div className="pt-3 border-t border-slate-200/80 bg-slate-50/80 -mx-4 -mb-4 sm:-mx-5 sm:-mb-5 p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-slate-500 font-bold text-[11px] uppercase tracking-wider mr-1">
+                            Recorte Ativo:
+                          </span>
+
+                          {filtroPeriodo !== 'todos' && (
+                            <span className="bg-blue-100 text-[#1a53db] px-2.5 py-0.5 rounded-full font-semibold flex items-center gap-1 text-[11px]">
+                              <span>Período: {filtroPeriodo}</span>
+                              <button
+                                type="button"
+                                onClick={() => setFiltroPeriodo('todos')}
+                                className="hover:text-red-600 font-black ml-0.5"
+                              >
+                                &times;
+                              </button>
+                            </span>
+                          )}
+
+                          {filtroZonaCoordenacao !== 'todas' && (
+                            <span className="bg-purple-100 text-purple-900 px-2.5 py-0.5 rounded-full font-semibold flex items-center gap-1 text-[11px]">
+                              <span>Coord: {coordenacoes.find((c) => c.id === filtroZonaCoordenacao)?.nome || filtroZonaCoordenacao}</span>
+                              <button
+                                type="button"
+                                onClick={() => setFiltroZonaCoordenacao('todas')}
+                                className="hover:text-red-600 font-black ml-0.5"
+                              >
+                                &times;
+                              </button>
+                            </span>
+                          )}
+
+                          {filtroZonaComuna !== 'todas' && (
+                            <span className="bg-sky-100 text-sky-900 px-2.5 py-0.5 rounded-full font-semibold flex items-center gap-1 text-[11px]">
+                              <span>Comuna: {filtroZonaComuna}</span>
+                              <button
+                                type="button"
+                                onClick={() => setFiltroZonaComuna('todas')}
+                                className="hover:text-red-600 font-black ml-0.5"
+                              >
+                                &times;
+                              </button>
+                            </span>
+                          )}
+
+                          {filtroZonaBairro !== 'todos' && (
+                            <span className="bg-emerald-100 text-emerald-900 px-2.5 py-0.5 rounded-full font-semibold flex items-center gap-1 text-[11px]">
+                              <span>Bairro: {filtroZonaBairro}</span>
+                              <button
+                                type="button"
+                                onClick={() => setFiltroZonaBairro('todos')}
+                                className="hover:text-red-600 font-black ml-0.5"
+                              >
+                                &times;
+                              </button>
+                            </span>
+                          )}
+
+                          {filtroPontoCategoria !== 'todas' && (
+                            <span className="bg-amber-100 text-amber-900 px-2.5 py-0.5 rounded-full font-semibold flex items-center gap-1 text-[11px]">
+                              <span>Ponto: {filtroPontoCategoria}</span>
+                              <button
+                                type="button"
+                                onClick={() => setFiltroPontoCategoria('todas')}
+                                className="hover:text-red-600 font-black ml-0.5"
+                              >
+                                &times;
+                              </button>
+                            </span>
+                          )}
+
+                          {filtroSupervisorGeral !== 'todos' && (
+                            <span className="bg-slate-200 text-slate-800 px-2.5 py-0.5 rounded-full font-semibold flex items-center gap-1 text-[11px]">
+                              <span>Sup: {supervisores.find((s) => s.id === filtroSupervisorGeral)?.nome.split(' ')[0] || filtroSupervisorGeral}</span>
+                              <button
+                                type="button"
+                                onClick={() => setFiltroSupervisorGeral('todos')}
+                                className="hover:text-red-600 font-black ml-0.5"
+                              >
+                                &times;
+                              </button>
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-3 shrink-0 text-slate-600">
+                          <span className="font-mono">
+                            <strong>{submissoesAtivas.length}</strong> envios &bull; <strong className="text-[#1a53db]">{stats.totalPessoas.toLocaleString('pt-PT')}</strong> pessoas
+                          </span>
+                          <button
+                            type="button"
+                            onClick={handleResetFilters}
+                            className="text-[#2667ff] hover:text-[#1a53db] font-bold underline cursor-pointer"
+                          >
+                            Limpar Tudo
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* AVISO QUANDO NENHUM REGISTO COINCIDIR COM O FILTRO */}
+              {isAnyFilterActive && submissoesAtivas.length === 0 && (
+                <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-6 text-center space-y-2">
+                  <div className="w-10 h-10 bg-amber-100 text-amber-700 rounded-full mx-auto flex items-center justify-center">
+                    <AlertCircle className="w-5 h-5" />
+                  </div>
+                  <h4 className="font-bold text-amber-950 text-base">
+                    Nenhum Registo Encontrado para os Filtros Selecionados
+                  </h4>
+                  <p className="text-xs text-amber-800 max-w-md mx-auto">
+                    Não há fichas de mobilização submetidas correspondentes ao período e local de intervenção escolhidos. Tente alargar o período ou selecionar outro bairro/coordenação.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleResetFilters}
+                    className="mt-2 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs px-4 py-2 rounded-xl transition cursor-pointer"
+                  >
+                    Restaurar Todos os Registos
+                  </button>
+                </div>
+              )}
+
               {/* CARTÕES DE ESTATÍSTICAS (KPIs) */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs border-l-4 border-l-[#2667ff]">
@@ -2894,7 +3949,7 @@ export const AdminView: React.FC = () => {
                           <span className="w-3 h-3 rounded-full bg-emerald-600"></span>
                           <span>Total de Sim (Adesão)</span>
                         </div>
-                        <span className="font-bold font-mono text-sm">{adesaoPieData[0].percentStr}</span>
+                        <span className="font-bold font-mono text-sm">{adesaoPieData[0]?.percentStr || '0%'}</span>
                       </div>
 
                       <div className="flex items-center justify-between bg-red-50 px-3 py-2 rounded-lg border border-red-200 text-red-900 font-semibold">
@@ -2902,7 +3957,7 @@ export const AdminView: React.FC = () => {
                           <span className="w-3 h-3 rounded-full bg-red-600"></span>
                           <span>Total de Não (Recusa)</span>
                         </div>
-                        <span className="font-bold font-mono text-sm">{adesaoPieData[1].percentStr}</span>
+                        <span className="font-bold font-mono text-sm">{adesaoPieData[1]?.percentStr || '0%'}</span>
                       </div>
                     </div>
                   </div>
@@ -3079,6 +4134,344 @@ export const AdminView: React.FC = () => {
                       />
                     </BarChart>
                   </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* ============================================================ */}
+              {/* RECHARTS: PROGRESSO DAS ATIVIDADES POR CATEGORIA (8 CATEGORIAS) */}
+              {/* ============================================================ */}
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs space-y-5">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                  <div>
+                    <h3 className="font-bold text-slate-800 text-base flex items-center gap-2">
+                      <BarChart3 className="w-5 h-5 text-[#2667ff]" />
+                      <span>Progresso das Atividades de Mobilização por Categoria (8 Categorias)</span>
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Visualização gráfica interativa com Recharts: compare o volume de pessoas alcançadas, locais visitados e eficácia média por ponto de mobilização comunitária no Sumbe
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    {/* Seletor de Métrica */}
+                    <div className="inline-flex bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setCategoriaChartMetric('pessoas')}
+                        className={`px-2.5 py-1 rounded-md font-semibold transition cursor-pointer ${
+                          categoriaChartMetric === 'pessoas'
+                            ? 'bg-[#2667ff] text-white shadow-2xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        Pessoas
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCategoriaChartMetric('locais')}
+                        className={`px-2.5 py-1 rounded-md font-semibold transition cursor-pointer ${
+                          categoriaChartMetric === 'locais'
+                            ? 'bg-[#2667ff] text-white shadow-2xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        Locais
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCategoriaChartMetric('comparativo')}
+                        className={`px-2.5 py-1 rounded-md font-semibold transition cursor-pointer ${
+                          categoriaChartMetric === 'comparativo'
+                            ? 'bg-[#2667ff] text-white shadow-2xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        Comparativo Duplo
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCategoriaChartMetric('eficiencia')}
+                        className={`px-2.5 py-1 rounded-md font-semibold transition cursor-pointer ${
+                          categoriaChartMetric === 'eficiencia'
+                            ? 'bg-[#2667ff] text-white shadow-2xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        Média/Local
+                      </button>
+                    </div>
+
+                    {/* Alternância de Tipo de Gráfico (Barras / Donut) */}
+                    <div className="inline-flex bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setCategoriaChartType('barras')}
+                        className={`p-1.5 rounded-md transition cursor-pointer ${
+                          categoriaChartType === 'barras'
+                            ? 'bg-white text-[#2667ff] shadow-2xs font-bold'
+                            : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                        title="Gráfico de Barras"
+                      >
+                        <BarChart3 className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCategoriaChartType('pizza')}
+                        className={`p-1.5 rounded-md transition cursor-pointer ${
+                          categoriaChartType === 'pizza'
+                            ? 'bg-white text-[#2667ff] shadow-2xs font-bold'
+                            : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                        title="Gráfico Donut / Circular"
+                      >
+                        <PieIcon className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 4 Mini Cartões de Destaque / KPIs Rápidos */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="bg-blue-50/70 border border-blue-200 p-3 rounded-xl">
+                    <div className="text-[11px] font-bold text-blue-800 uppercase flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Total Pessoas (8 Categorias)</span>
+                    </div>
+                    <div className="text-xl sm:text-2xl font-black text-blue-900 mt-1">
+                      {categoriaRechartsData.totalPessoas.toLocaleString('pt-PT')}
+                    </div>
+                    <div className="text-[10px] text-blue-700 font-medium">Alcançadas no terreno</div>
+                  </div>
+
+                  <div className="bg-sky-50/70 border border-sky-200 p-3 rounded-xl">
+                    <div className="text-[11px] font-bold text-sky-800 uppercase flex items-center gap-1.5">
+                      <MapPin className="w-3.5 h-3.5 text-sky-600" />
+                      <span>Total Locais Cobertos</span>
+                    </div>
+                    <div className="text-xl sm:text-2xl font-black text-sky-900 mt-1">
+                      {categoriaRechartsData.totalLocais.toLocaleString('pt-PT')}
+                    </div>
+                    <div className="text-[10px] text-sky-700 font-medium">Pontos de mobilização</div>
+                  </div>
+
+                  <div className="bg-purple-50/70 border border-purple-200 p-3 rounded-xl">
+                    <div className="text-[11px] font-bold text-purple-800 uppercase flex items-center gap-1.5">
+                      <TrendingUp className="w-3.5 h-3.5 text-purple-600" />
+                      <span>Média Geral / Local</span>
+                    </div>
+                    <div className="text-xl sm:text-2xl font-black text-purple-900 mt-1">
+                      {categoriaRechartsData.mediaGeral}
+                    </div>
+                    <div className="text-[10px] text-purple-700 font-medium">Pessoas por local visitado</div>
+                  </div>
+
+                  <div className="bg-emerald-50/70 border border-emerald-200 p-3 rounded-xl">
+                    <div className="text-[11px] font-bold text-emerald-800 uppercase flex items-center gap-1.5">
+                      <Award className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Categoria Líder</span>
+                    </div>
+                    {(() => {
+                      const maxItem = [...categoriaRechartsData.items].sort((a, b) => b.pessoas - a.pessoas)[0];
+                      return (
+                        <>
+                          <div className="text-base sm:text-lg font-black text-emerald-950 mt-1 truncate" title={maxItem?.nomeCompleto}>
+                            {maxItem?.categoria || 'N/A'}
+                          </div>
+                          <div className="text-[10px] text-emerald-700 font-medium">
+                            {maxItem ? `${maxItem.pessoas.toLocaleString('pt-PT')} pess. (${maxItem.percentPessoasStr})` : '0'}
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </div>
+
+                {/* GRÁFICO RECHARTS COM CONTAINER RESPONSIVO */}
+                <div className="pt-2">
+                  {categoriaChartType === 'barras' ? (
+                    <div className="w-full h-80">
+                      <ResponsiveContainer width="100%" height={320}>
+                        <BarChart
+                          data={categoriaRechartsData.items}
+                          margin={{ top: 15, right: 20, left: -10, bottom: 45 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                          <XAxis
+                            dataKey="categoria"
+                            tick={{ fontSize: 11, fill: '#334155', fontWeight: 600 }}
+                            interval={0}
+                            angle={-20}
+                            textAnchor="end"
+                            height={45}
+                          />
+                          <YAxis tick={{ fontSize: 11, fill: '#64748b' }} allowDecimals={false} />
+                          <Tooltip
+                            contentStyle={{
+                              backgroundColor: '#0f172a',
+                              borderColor: '#334155',
+                              borderRadius: '8px',
+                              color: '#fff',
+                              fontSize: '12px',
+                            }}
+                            formatter={(value: any, name: any, item: any) => {
+                              const p = item?.payload;
+                              if (categoriaChartMetric === 'comparativo') {
+                                return [
+                                  `${Number(value).toLocaleString('pt-PT')} ${name === 'pessoas' ? 'pessoas' : 'locais'}`,
+                                  name === 'pessoas' ? 'Pessoas Mobilizadas' : 'Locais Visitados',
+                                ];
+                              }
+                              if (categoriaChartMetric === 'eficiencia') {
+                                return [`${value} pessoas/local`, 'Média de Pessoas por Local'];
+                              }
+                              if (categoriaChartMetric === 'locais') {
+                                return [`${Number(value).toLocaleString('pt-PT')} locais (${p?.percentLocaisStr || ''})`, 'Locais Visitados'];
+                              }
+                              return [`${Number(value).toLocaleString('pt-PT')} pessoas (${p?.percentPessoasStr || ''})`, 'Pessoas Mobilizadas'];
+                            }}
+                            labelFormatter={(label, payload) => {
+                              const item = payload?.[0]?.payload;
+                              return item ? `${item.nomeCompleto} (${item.descricao})` : label;
+                            }}
+                          />
+                          <Legend
+                            verticalAlign="top"
+                            align="right"
+                            iconType="circle"
+                            wrapperStyle={{ fontSize: '11px', paddingBottom: '10px' }}
+                          />
+                          {categoriaChartMetric === 'comparativo' ? (
+                            <>
+                              <Bar
+                                dataKey="pessoas"
+                                name="Pessoas Mobilizadas"
+                                fill="#2563eb"
+                                radius={[4, 4, 0, 0]}
+                                maxBarSize={32}
+                              />
+                              <Bar
+                                dataKey="locais"
+                                name="Locais Visitados"
+                                fill="#0d9488"
+                                radius={[4, 4, 0, 0]}
+                                maxBarSize={32}
+                              />
+                            </>
+                          ) : categoriaChartMetric === 'locais' ? (
+                            <Bar
+                              dataKey="locais"
+                              name="Locais Visitados"
+                              radius={[6, 6, 0, 0]}
+                              maxBarSize={45}
+                            >
+                              {categoriaRechartsData.items.map((entry) => (
+                                <Cell key={entry.id} fill={entry.corPessoas} />
+                              ))}
+                            </Bar>
+                          ) : categoriaChartMetric === 'eficiencia' ? (
+                            <Bar
+                              dataKey="mediaPorLocal"
+                              name="Média de Pessoas por Local"
+                              radius={[6, 6, 0, 0]}
+                              maxBarSize={45}
+                            >
+                              {categoriaRechartsData.items.map((entry) => (
+                                <Cell key={entry.id} fill={entry.corPessoas} />
+                              ))}
+                            </Bar>
+                          ) : (
+                            <Bar
+                              dataKey="pessoas"
+                              name="Pessoas Mobilizadas"
+                              radius={[6, 6, 0, 0]}
+                              maxBarSize={45}
+                            >
+                              {categoriaRechartsData.items.map((entry) => (
+                                <Cell key={entry.id} fill={entry.corPessoas} />
+                              ))}
+                            </Bar>
+                          )}
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <div className="w-full h-80">
+                      <ResponsiveContainer width="100%" height={320}>
+                        <PieChart>
+                          <Pie
+                            data={categoriaRechartsData.items}
+                            dataKey={categoriaChartMetric === 'locais' ? 'locais' : 'pessoas'}
+                            nameKey="categoria"
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={55}
+                            outerRadius={105}
+                            paddingAngle={3}
+                          >
+                            {categoriaRechartsData.items.map((entry) => (
+                              <Cell key={entry.id} fill={entry.corPessoas} />
+                            ))}
+                          </Pie>
+                          <Tooltip
+                            contentStyle={{
+                              backgroundColor: '#0f172a',
+                              borderColor: '#334155',
+                              borderRadius: '8px',
+                              color: '#fff',
+                              fontSize: '12px',
+                            }}
+                            formatter={(value: any, name: any, item: any) => {
+                              const p = item?.payload;
+                              const pct = categoriaChartMetric === 'locais' ? p?.percentLocaisStr : p?.percentPessoasStr;
+                              return [
+                                `${Number(value).toLocaleString('pt-PT')} (${pct})`,
+                                categoriaChartMetric === 'locais' ? 'Locais Visitados' : 'Pessoas Mobilizadas',
+                              ];
+                            }}
+                          />
+                          <Legend
+                            verticalAlign="bottom"
+                            align="center"
+                            iconType="circle"
+                            wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }}
+                          />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                </div>
+
+                {/* Grid Rápido das 8 Categorias com Cores e Valores */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-slate-100">
+                  {categoriaRechartsData.items.map((item) => (
+                    <div
+                      key={item.id}
+                      className="p-2.5 rounded-lg border border-slate-200 bg-slate-50/60 hover:bg-white transition"
+                    >
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <span
+                          className="w-2.5 h-2.5 rounded-full shrink-0"
+                          style={{ backgroundColor: item.corPessoas }}
+                        ></span>
+                        <span className="text-xs font-bold text-slate-800 truncate" title={item.nomeCompleto}>
+                          {item.categoria}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="text-slate-500 font-mono">
+                          {item.pessoas.toLocaleString('pt-PT')} pess.
+                        </span>
+                        <span className="font-bold text-slate-700 font-mono">
+                          {item.percentPessoasStr}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-0.5 flex justify-between">
+                        <span>{item.locais} locais</span>
+                        <span>{item.mediaPorLocal} p/loc</span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
 
@@ -4019,17 +5412,50 @@ export const AdminView: React.FC = () => {
                       </p>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setDiarioFiltroData('todas');
-                        setDiarioFiltroSupervisor('todos');
-                        setDiarioFiltroCoordenacao('todas');
-                      }}
-                      className="text-xs text-[#2667ff] hover:text-[#1a53db] font-semibold border border-blue-200 bg-blue-50 px-3 py-1.5 rounded-lg transition cursor-pointer self-start sm:self-center"
-                    >
-                      Mostrar Todas as Fichas
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2 self-start sm:self-center">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDiarioFiltroData('todas');
+                          setDiarioFiltroSupervisor('todos');
+                          setDiarioFiltroCoordenacao('todas');
+                        }}
+                        className="text-xs text-[#2667ff] hover:text-[#1a53db] font-semibold border border-blue-200 bg-blue-50 px-3 py-1.5 rounded-lg transition cursor-pointer"
+                      >
+                        Mostrar Todas as Fichas
+                      </button>
+
+                      {!isReadOnly && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (diarioFiltroSupervisor !== 'todos') {
+                              setDuplicateFilterSupervisor(diarioFiltroSupervisor);
+                            }
+                            if (diarioFiltroData !== 'todas') {
+                              setDuplicateFilterData(diarioFiltroData);
+                            }
+                            setShowDuplicatesModal(true);
+                          }}
+                          className={`text-xs font-bold px-3 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1.5 shadow-2xs ${
+                            duplicateDetection.totalExcessCount > 0
+                              ? 'bg-amber-500 hover:bg-amber-600 text-white'
+                              : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                          }`}
+                          title="Abrir gestor para detectar e eliminar fichas duplicadas por dia e por supervisor"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>
+                            Eliminar Duplicados
+                            {duplicateDetection.totalExcessCount > 0 && (
+                              <span className="ml-1 bg-amber-700 text-white text-[10px] px-1.5 py-0.2 rounded-full font-black">
+                                {duplicateDetection.totalExcessCount}
+                              </span>
+                            )}
+                          </span>
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   {/* Barra de Filtros Interativos */}
@@ -5806,6 +7232,145 @@ export const AdminView: React.FC = () => {
                         </div>
                         <span className="text-[10px] text-slate-400">Pessoas que recusaram</span>
                       </div>
+                    </div>
+                  </div>
+
+                  {/* RECHARTS: GRÁFICO VISUAL DAS 8 CATEGORIAS DE MOBILIZAÇÃO */}
+                  <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                      <div>
+                        <h4 className="font-bold text-slate-900 text-base flex items-center gap-2">
+                          <BarChart3 className="w-5 h-5 text-[#2667ff]" />
+                          <span>Gráfico Comparativo das 8 Categorias no Sumbe</span>
+                        </h4>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          Análise gráfica direta do volume de pessoas mobilizadas e locais visitados em cada uma das 8 frentes de atuação
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <div className="inline-flex bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs">
+                          <button
+                            type="button"
+                            onClick={() => setCategoriaChartMetric('pessoas')}
+                            className={`px-2.5 py-1 rounded-md font-semibold transition cursor-pointer ${
+                              categoriaChartMetric === 'pessoas'
+                                ? 'bg-[#2667ff] text-white shadow-2xs'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            Pessoas
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setCategoriaChartMetric('locais')}
+                            className={`px-2.5 py-1 rounded-md font-semibold transition cursor-pointer ${
+                              categoriaChartMetric === 'locais'
+                                ? 'bg-[#2667ff] text-white shadow-2xs'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            Locais
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setCategoriaChartMetric('comparativo')}
+                            className={`px-2.5 py-1 rounded-md font-semibold transition cursor-pointer ${
+                              categoriaChartMetric === 'comparativo'
+                                ? 'bg-[#2667ff] text-white shadow-2xs'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            Comparativo Duplo
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="w-full h-72">
+                      <ResponsiveContainer width="100%" height={280}>
+                        <BarChart
+                          data={categoriaRechartsData.items}
+                          margin={{ top: 10, right: 20, left: -10, bottom: 40 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                          <XAxis
+                            dataKey="categoria"
+                            tick={{ fontSize: 11, fill: '#334155', fontWeight: 600 }}
+                            interval={0}
+                            angle={-15}
+                            textAnchor="end"
+                            height={40}
+                          />
+                          <YAxis tick={{ fontSize: 11, fill: '#64748b' }} allowDecimals={false} />
+                          <Tooltip
+                            contentStyle={{
+                              backgroundColor: '#0f172a',
+                              borderColor: '#334155',
+                              borderRadius: '8px',
+                              color: '#fff',
+                              fontSize: '12px',
+                            }}
+                            formatter={(value: any, name: any, item: any) => {
+                              const p = item?.payload;
+                              return [
+                                `${Number(value).toLocaleString('pt-PT')} (${name === 'pessoas' ? p?.percentPessoasStr : p?.percentLocaisStr || ''})`,
+                                name === 'pessoas' ? 'Pessoas Mobilizadas' : 'Locais Visitados',
+                              ];
+                            }}
+                            labelFormatter={(label, payload) => {
+                              const item = payload?.[0]?.payload;
+                              return item ? `${item.nomeCompleto} (${item.descricao})` : label;
+                            }}
+                          />
+                          <Legend
+                            verticalAlign="top"
+                            align="right"
+                            iconType="circle"
+                            wrapperStyle={{ fontSize: '11px', paddingBottom: '8px' }}
+                          />
+                          {categoriaChartMetric === 'comparativo' ? (
+                            <>
+                              <Bar
+                                dataKey="pessoas"
+                                name="Pessoas Mobilizadas"
+                                fill="#2563eb"
+                                radius={[4, 4, 0, 0]}
+                                maxBarSize={30}
+                              />
+                              <Bar
+                                dataKey="locais"
+                                name="Locais Visitados"
+                                fill="#0d9488"
+                                radius={[4, 4, 0, 0]}
+                                maxBarSize={30}
+                              />
+                            </>
+                          ) : categoriaChartMetric === 'locais' ? (
+                            <Bar
+                              dataKey="locais"
+                              name="Locais Visitados"
+                              radius={[6, 6, 0, 0]}
+                              maxBarSize={45}
+                            >
+                              {categoriaRechartsData.items.map((entry) => (
+                                <Cell key={entry.id} fill={entry.corPessoas} />
+                              ))}
+                            </Bar>
+                          ) : (
+                            <Bar
+                              dataKey="pessoas"
+                              name="Pessoas Mobilizadas"
+                              radius={[6, 6, 0, 0]}
+                              maxBarSize={45}
+                            >
+                              {categoriaRechartsData.items.map((entry) => (
+                                <Cell key={entry.id} fill={entry.corPessoas} />
+                              ))}
+                            </Bar>
+                          )}
+                        </BarChart>
+                      </ResponsiveContainer>
                     </div>
                   </div>
 
@@ -8539,7 +10104,10 @@ export const AdminView: React.FC = () => {
                   </h3>
                 </div>
                 <div className="text-xs text-slate-500 mt-0.5">
-                  Data de Coleta: {selectedSubmission.data} &bull; Enviado em: {new Date(selectedSubmission.dataEnvio).toLocaleString('pt-PT')}
+                  Data de Coleta: {selectedSubmission.data} &bull; Enviado em:{' '}
+                  {selectedSubmission.dataEnvio
+                    ? new Date(selectedSubmission.dataEnvio).toLocaleString('pt-PT')
+                    : selectedSubmission.data || 'Registado'}
                 </div>
               </div>
               <button
@@ -8556,29 +10124,31 @@ export const AdminView: React.FC = () => {
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div className="bg-[#eff4ff] p-3 rounded-lg border border-[#bfdbfe] text-center">
                   <div className="text-[11px] font-semibold text-[#1a53db] uppercase">Total Pessoas (Sim)</div>
-                  <div className="text-xl font-bold text-[#1b4fd8]">{selectedSubmission.totalSim.toLocaleString('pt-PT')}</div>
+                  <div className="text-xl font-bold text-[#1b4fd8]">
+                    {Number(selectedSubmission.totalSim || 0).toLocaleString('pt-PT')}
+                  </div>
                 </div>
                 <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-center">
                   <div className="text-[11px] font-semibold text-slate-600 uppercase">Total Não</div>
-                  <div className="text-xl font-bold text-slate-800">{selectedSubmission.totalNao}</div>
+                  <div className="text-xl font-bold text-slate-800">{selectedSubmission.totalNao || 0}</div>
                 </div>
                 <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-center">
                   <div className="text-[11px] font-semibold text-slate-600 uppercase">Locais Visitados</div>
-                  <div className="text-xl font-bold text-slate-800">{selectedSubmission.totalLocais}</div>
+                  <div className="text-xl font-bold text-slate-800">{selectedSubmission.totalLocais || 0}</div>
                 </div>
                 <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-center">
                   <div className="text-[11px] font-semibold text-slate-600 uppercase">Fichas / Bairros</div>
-                  <div className="text-xl font-bold text-slate-800">{selectedSubmission.fichas.length}</div>
+                  <div className="text-xl font-bold text-slate-800">{(selectedSubmission.fichas || []).length}</div>
                 </div>
               </div>
 
               {/* Fichas Individuais */}
               <div className="space-y-4">
                 <h4 className="font-bold text-slate-800 text-sm uppercase tracking-wide">
-                  Desdobramento das Fichas ({selectedSubmission.fichas.length}):
+                  Desdobramento das Fichas ({(selectedSubmission.fichas || []).length}):
                 </h4>
 
-                {selectedSubmission.fichas.map((ficha, idx) => (
+                {(selectedSubmission.fichas || []).map((ficha, idx) => (
                   <div key={ficha.id || idx} className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
                     <div className="flex items-center justify-between border-b border-slate-200/80 pb-2">
                       <div className="flex items-center gap-2">
@@ -10119,6 +11689,388 @@ export const AdminView: React.FC = () => {
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* MODAL 1: GESTÃO E ELIMINAÇÃO DE DUPLICAÇÃO DE DADOS POR DIA E SUPERVISOR */}
+      {/* ============================================================== */}
+      {showDuplicatesModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            {/* Cabeçalho do Modal */}
+            <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-900 text-white flex items-start justify-between gap-3 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-400/30 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base sm:text-lg text-white flex items-center gap-2">
+                    <span>Gestão e Eliminação de Fichas Duplicadas</span>
+                    {duplicateDetection.totalExcessCount > 0 && (
+                      <span className="bg-amber-500 text-slate-950 font-black text-xs px-2 py-0.5 rounded-full">
+                        {duplicateDetection.totalExcessCount} réplicas
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-xs text-slate-300 mt-0.5">
+                    Permite identificar e eliminar fichas duplicadas lançadas pelo mesmo supervisor no mesmo dia, mantendo apenas o registo original.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDuplicatesModal(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Painel de Métricas e Filtros */}
+            <div className="p-4 sm:p-5 bg-slate-50 border-b border-slate-200 space-y-4 shrink-0">
+              {/* Mini Cartões com Resumo do Diagnóstico */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
+                  <div className="text-[11px] font-bold text-slate-500 uppercase">Grupos com Duplicações</div>
+                  <div className="text-2xl font-black text-slate-900 mt-0.5">
+                    {duplicateDetection.totalGroups}
+                  </div>
+                  <div className="text-[10px] text-slate-500">Pares de supervisor e dia com 2+ envios</div>
+                </div>
+
+                <div className="bg-white p-3 rounded-xl border border-amber-200 bg-amber-50/30 shadow-2xs">
+                  <div className="text-[11px] font-bold text-amber-800 uppercase flex items-center gap-1">
+                    <Copy className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Cópias Replicadas a Eliminar</span>
+                  </div>
+                  <div className="text-2xl font-black text-amber-700 mt-0.5">
+                    {duplicateDetection.totalExcessCount}
+                  </div>
+                  <div className="text-[10px] text-amber-700">Envios excedentes prontos para remoção</div>
+                </div>
+
+                <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs">
+                  <div className="text-[11px] font-bold text-slate-500 uppercase">Pessoas Duplicadas nas Cópias</div>
+                  <div className="text-2xl font-black text-red-600 mt-0.5">
+                    +{duplicateDetection.totalDuplicatePessoas.toLocaleString('pt-PT')}
+                  </div>
+                  <div className="text-[10px] text-slate-500">Valor inflacionado nos totais por réplicas</div>
+                </div>
+              </div>
+
+              {/* Barra de Filtros e Pesquisa */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
+                <div className="flex flex-wrap items-center gap-2 flex-1">
+                  {/* Filtro por Supervisor */}
+                  <select
+                    value={duplicateFilterSupervisor}
+                    onChange={(e) => setDuplicateFilterSupervisor(e.target.value)}
+                    className="text-xs py-1.5 px-2.5 bg-white border border-slate-300 rounded-lg text-slate-700 font-medium focus:ring-2 focus:ring-[#2667ff] outline-none"
+                  >
+                    <option value="todos">Todos os Supervisores com Duplicados</option>
+                    {supervisoresComDuplicados.map((sup) => (
+                      <option key={sup.id} value={sup.id}>
+                        {sup.nome}
+                      </option>
+                    ))}
+                  </select>
+
+                  {/* Filtro por Data */}
+                  <select
+                    value={duplicateFilterData}
+                    onChange={(e) => setDuplicateFilterData(e.target.value)}
+                    className="text-xs py-1.5 px-2.5 bg-white border border-slate-300 rounded-lg text-slate-700 font-medium focus:ring-2 focus:ring-[#2667ff] outline-none"
+                  >
+                    <option value="todas">Todas as Datas com Duplicados</option>
+                    {datasComDuplicados.map((d) => (
+                      <option key={d} value={d}>
+                        {d}
+                      </option>
+                    ))}
+                  </select>
+
+                  {/* Pesquisa Livre */}
+                  <div className="relative flex-1 min-w-[160px]">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                    <input
+                      type="text"
+                      placeholder="Pesquisar por nome ou bairro..."
+                      value={duplicateSearchTerm}
+                      onChange={(e) => setDuplicateSearchTerm(e.target.value)}
+                      className="w-full text-xs pl-8 pr-3 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-700 focus:ring-2 focus:ring-[#2667ff] outline-none"
+                    />
+                  </div>
+                </div>
+
+                {/* Botão de Limpeza em Lote */}
+                {filteredDuplicateGroups.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleDeleteAllFilteredDuplicates}
+                    disabled={isDeletingDuplicatesBatch}
+                    className="bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-bold text-xs px-3.5 py-2 rounded-lg flex items-center justify-center gap-1.5 transition cursor-pointer shadow-xs shrink-0"
+                    title="Elimina todas as réplicas excedentes exibidas, mantendo exatamente o primeiro envio de cada um"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>
+                      {isDeletingDuplicatesBatch ? 'A Eliminar...' : 'Eliminar Todas as Cópias Filtradas'}
+                    </span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Lista dos Grupos de Duplicados */}
+            <div className="p-4 sm:p-5 flex-1 overflow-y-auto space-y-4">
+              {filteredDuplicateGroups.length === 0 ? (
+                <div className="text-center py-12 bg-emerald-50/60 border border-emerald-200 rounded-2xl p-6 space-y-3">
+                  <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-full mx-auto flex items-center justify-center">
+                    <CheckCircle className="w-6 h-6" />
+                  </div>
+                  <h4 className="font-bold text-emerald-950 text-base">
+                    Nenhuma Ficha Duplicada Detetada!
+                  </h4>
+                  <p className="text-xs text-emerald-800 max-w-md mx-auto">
+                    Não existem envios replicados no mesmo dia para os filtros selecionados. A base de dados do Município do Sumbe está limpa e consistente.
+                  </p>
+                </div>
+              ) : (
+                filteredDuplicateGroups.map((group) => {
+                  const original = group.submissoes[0];
+                  const copias = group.submissoes.slice(1);
+
+                  return (
+                    <div
+                      key={group.key}
+                      className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden"
+                    >
+                      {/* Cabeçalho do Grupo */}
+                      <div className="p-3.5 sm:p-4 bg-slate-100/80 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-slate-900 text-sm">
+                              {group.supervisorNome}
+                            </span>
+                            <span className="bg-slate-200 text-slate-700 font-mono text-[11px] px-2 py-0.5 rounded font-semibold">
+                              Data: {group.data}
+                            </span>
+                            {group.diaCampanha && (
+                              <span className="bg-blue-100 text-[#1a53db] text-[10px] px-2 py-0.5 rounded font-bold">
+                                Dia {group.diaCampanha}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-2">
+                            <span>
+                              Total de <strong>{group.submissoes.length} envios</strong> registados neste mesmo dia
+                            </span>
+                            <span className="text-slate-300">&bull;</span>
+                            <span className="text-amber-700 font-semibold">
+                              {group.excessCount} cópia(s) replicada(s)
+                            </span>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteDuplicatesInGroup(group)}
+                          disabled={isDeletingDuplicatesBatch}
+                          className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-bold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition cursor-pointer self-start sm:self-center shadow-2xs"
+                          title="Preserva o 1º envio original e elimina as réplicas deste supervisor nesta data"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Eliminar Réplicas (Manter 1º Registo)</span>
+                        </button>
+                      </div>
+
+                      {/* Lista de Envios Deste Grupo */}
+                      <div className="p-3 sm:p-4 divide-y divide-slate-100 space-y-3">
+                        {group.submissoes.map((sub, idx) => {
+                          const isOriginal = idx === 0;
+                          const fichasCount = sub.fichas ? sub.fichas.length : 1;
+                          const dataEnvioFormatted = sub.dataEnvio
+                            ? new Date(sub.dataEnvio).toLocaleString('pt-PT')
+                            : 'Sem data de envio';
+
+                          return (
+                            <div
+                              key={sub.id}
+                              className={`pt-3 first:pt-0 flex flex-col md:flex-row md:items-center justify-between gap-3 p-3 rounded-lg border ${
+                                isOriginal
+                                  ? 'bg-emerald-50/40 border-emerald-200'
+                                  : 'bg-amber-50/50 border-amber-200'
+                              }`}
+                            >
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2">
+                                  <span
+                                    className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${
+                                      isOriginal
+                                        ? 'bg-emerald-600 text-white'
+                                        : 'bg-amber-600 text-white'
+                                    }`}
+                                  >
+                                    {isOriginal ? '1º Registo (Original)' : `Cópia Replicada #${idx}`}
+                                  </span>
+                                  <span className="text-xs font-mono text-slate-500">
+                                    ID: {sub.id.slice(0, 10)}...
+                                  </span>
+                                  <span className="text-xs text-slate-600">
+                                    Enviado às: <strong>{dataEnvioFormatted}</strong>
+                                  </span>
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-3 text-xs text-slate-700">
+                                  <span>
+                                    Fichas no envio: <strong className="font-mono">{fichasCount}</strong>
+                                  </span>
+                                  <span>&bull;</span>
+                                  <span>
+                                    Pessoas (Sim):{' '}
+                                    <strong className="text-[#1a53db] font-mono">
+                                      {sub.totalSim.toLocaleString('pt-PT')}
+                                    </strong>
+                                  </span>
+                                  <span>&bull;</span>
+                                  <span>
+                                    Recusas (Não):{' '}
+                                    <strong className="text-red-600 font-mono">
+                                      {sub.totalNao.toLocaleString('pt-PT')}
+                                    </strong>
+                                  </span>
+                                  <span>&bull;</span>
+                                  <span className="text-slate-500">
+                                    Bairros:{' '}
+                                    {(sub.fichas || [])
+                                      .map((f) => f.bairro)
+                                      .filter(Boolean)
+                                      .slice(0, 3)
+                                      .join(', ') || 'Sem bairro'}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedSubmission(sub)}
+                                  className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-slate-300 hover:bg-white text-slate-700 transition cursor-pointer flex items-center gap-1"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                  <span>Ver Detalhes</span>
+                                </button>
+
+                                {!isOriginal && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setSubToDelete(sub)}
+                                    className="text-xs font-bold px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white transition cursor-pointer flex items-center gap-1 shadow-2xs"
+                                    title="Eliminar esta cópia individual do Firebase"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                    <span>Eliminar Cópia</span>
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Rodapé do Modal */}
+            <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-3 shrink-0">
+              <span className="text-xs text-slate-500">
+                A eliminação das cópias atualiza automaticamente os totais, gráficos Recharts e relatórios da campanha.
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowDuplicatesModal(false)}
+                className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold cursor-pointer transition"
+              >
+                Fechar Gestor
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* MODAL 2: CONFIRMAÇÃO DE ELIMINAÇÃO DE FICHA INDIVIDUAL */}
+      {/* ============================================================== */}
+      {subToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md p-6 space-y-4 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-full bg-red-100 text-red-600 flex items-center justify-center shrink-0">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h4 className="font-bold text-slate-900 text-base">Eliminar Ficha do Firebase</h4>
+                <p className="text-xs text-slate-500">Confirmação de segurança</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Tem a certeza de que deseja eliminar permanentemente este registo de submissão de{' '}
+              <strong className="text-slate-900">{subToDelete.supervisorNome}</strong> na data{' '}
+              <strong className="text-slate-900">{subToDelete.data}</strong>?
+            </p>
+
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs text-slate-700 space-y-1">
+              <div className="flex justify-between">
+                <span>Total de Pessoas Mobilizadas:</span>
+                <strong className="text-[#1a53db] font-mono">
+                  {subToDelete.totalSim.toLocaleString('pt-PT')}
+                </strong>
+              </div>
+              <div className="flex justify-between">
+                <span>Quantidade de Fichas:</span>
+                <strong className="font-mono">
+                  {subToDelete.fichas ? subToDelete.fichas.length : 1}
+                </strong>
+              </div>
+              {subToDelete.dataEnvio && (
+                <div className="flex justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-200">
+                  <span>Data/Hora de Envio:</span>
+                  <span>{new Date(subToDelete.dataEnvio).toLocaleString('pt-PT')}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setSubToDelete(null)}
+                disabled={isDeletingSub}
+                className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 text-xs font-semibold hover:bg-slate-50 cursor-pointer transition"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => handleConfirmDeleteSubmission(subToDelete)}
+                disabled={isDeletingSub}
+                className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-xs font-semibold shadow-xs transition cursor-pointer flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isDeletingSub ? 'A Eliminar...' : 'Sim, Eliminar do Firebase'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* NOTIFICAÇÃO TOAST FLUTUANTE DE DUPLICAÇÃO */}
+      {duplicateToast && (
+        <div className="fixed bottom-5 right-5 z-50 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-2xl border border-slate-700 flex items-center gap-2.5 text-xs animate-in slide-in-from-bottom duration-200">
+          <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span className="font-semibold">{duplicateToast}</span>
         </div>
       )}
     </div>

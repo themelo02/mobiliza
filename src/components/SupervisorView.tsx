@@ -470,6 +470,33 @@ export const SupervisorView: React.FC = () => {
         Number(f.outros_locais);
     });
 
+    if (isSubmitting) return;
+
+    // Proteção contra duplicação acidental: verificar se o supervisor já lançou ficha com dados idênticos nesta mesma data
+    const existingSameDay = submissoes.filter(
+      (s) => s.supervisorId === activeSupervisor.id && s.data === dataColeta
+    );
+    const candidateBairros = finalFichas.map((f) => f.bairro.toLowerCase().trim()).sort().join(',');
+    const potentialDuplicate = existingSameDay.find((s) => {
+      const existingBairros = (s.fichas || []).map((f) => f.bairro.toLowerCase().trim()).sort().join(',');
+      return (
+        s.totalSim === totalSim &&
+        (existingBairros === candidateBairros || (s.fichas && s.fichas.length === finalFichas.length))
+      );
+    });
+
+    if (potentialDuplicate) {
+      const horaEnvio = potentialDuplicate.dataEnvio
+        ? new Date(potentialDuplicate.dataEnvio).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })
+        : 'anteriormente';
+      const confirmDuplicate = window.confirm(
+        `⚠️ ATENÇÃO: DUPLICAÇÃO DETECTADA!\n\nJá existe uma ficha lançada por ${activeSupervisor.nome} para o dia ${dataColeta} (enviada ${horaEnvio}) com os mesmos dados (${totalSim} pessoas Sim e ${finalFichas.length} fichas).\n\nDeseja realmente submeter esta ficha novamente ou prefere cancelar para evitar duplicação de dados?`
+      );
+      if (!confirmDuplicate) {
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     try {
       const newSubmissao = await addSubmissao({

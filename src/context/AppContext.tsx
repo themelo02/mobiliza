@@ -52,6 +52,7 @@ interface AppContextType {
   updateSubmissao: (id: string, updatedData: Partial<Submissao>) => Promise<void>;
   updateSubmissaoStatus: (id: string, status: 'Validado' | 'Pendente' | 'Em Revisão') => Promise<void>;
   deleteSubmissao: (id: string) => Promise<void>;
+  deleteMultipleSubmissoes: (ids: string[]) => Promise<{ deleted: number }>;
   clearAllSubmissoes: () => Promise<void>;
   clearAllSupervisores: () => Promise<void>;
   clearAllData: () => Promise<void>;
@@ -1086,11 +1087,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const deleteSubmissao = async (id: string): Promise<void> => {
     setSubmissoes((prev) => prev.filter((s) => s.id !== id));
 
+    // Remover também da fila offline persistente caso conste nela
+    const currentQueue = getOfflineQueue();
+    if (currentQueue.some((s) => s.id === id)) {
+      const updatedQueue = currentQueue.filter((s) => s.id !== id);
+      saveOfflineQueue(updatedQueue);
+      setOfflineQueueCount(updatedQueue.length);
+    }
+
     try {
       await deleteDoc(doc(db, 'submissoes', id));
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, `submissoes/${id}`);
     }
+  };
+
+  const deleteMultipleSubmissoes = async (ids: string[]): Promise<{ deleted: number }> => {
+    if (!ids || ids.length === 0) return { deleted: 0 };
+    const idSet = new Set(ids);
+    setSubmissoes((prev) => prev.filter((s) => !idSet.has(s.id)));
+
+    // Remover também da fila offline
+    const currentQueue = getOfflineQueue();
+    const updatedQueue = currentQueue.filter((s) => !idSet.has(s.id));
+    if (updatedQueue.length !== currentQueue.length) {
+      saveOfflineQueue(updatedQueue);
+      setOfflineQueueCount(updatedQueue.length);
+    }
+
+    try {
+      const batch = writeBatch(db);
+      ids.forEach((id) => {
+        batch.delete(doc(db, 'submissoes', id));
+      });
+      await batch.commit();
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, 'submissoes_batch');
+    }
+    return { deleted: ids.length };
   };
 
   // CLEAR ALL SUBMISSIONS (TOTAL AUTHORITY)
@@ -1221,6 +1255,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateSubmissao,
         updateSubmissaoStatus,
         deleteSubmissao,
+        deleteMultipleSubmissoes,
         clearAllSubmissoes,
         clearAllSupervisores,
         clearAllData,

@@ -5,6 +5,7 @@ import { NavigationHeader } from './components/NavigationHeader';
 import { SupervisorView } from './components/SupervisorView';
 import { AdminView } from './components/AdminView';
 import { SupervisorHistoryView } from './components/SupervisorHistoryView';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 const MainLayout: React.FC = () => {
   const { userSession, activeScreen, offlineSyncToast } = useApp();
@@ -23,15 +24,17 @@ const MainLayout: React.FC = () => {
 
       <main className="flex-1">
         {/* Utilizador de Apenas Leitura acede exclusivamente às vistas de análise e relatórios */}
-        {isLeitor ? (
-          <AdminView />
-        ) : (
-          <>
-            {activeScreen === 'formulario' && <SupervisorView />}
-            {activeScreen === 'dashboard' && <AdminView />}
-            {activeScreen === 'historico' && <SupervisorHistoryView />}
-          </>
-        )}
+        <ErrorBoundary fallbackTitle="Erro ao carregar ecrã do sistema">
+          {isLeitor ? (
+            <AdminView />
+          ) : (
+            <>
+              {activeScreen === 'formulario' && <SupervisorView />}
+              {activeScreen === 'dashboard' && <AdminView />}
+              {activeScreen === 'historico' && <SupervisorHistoryView />}
+            </>
+          )}
+        </ErrorBoundary>
       </main>
 
       {/* Notificação Flutuante de Sincronização Automática Offline */}
@@ -47,8 +50,10 @@ const MainLayout: React.FC = () => {
 
 export default function App() {
   return (
-    <AppProvider>
-      <MainLayout />
-    </AppProvider>
+    <ErrorBoundary fallbackTitle="Erro ao inicializar aplicação MS-Sumbe">
+      <AppProvider>
+        <MainLayout />
+      </AppProvider>
+    </ErrorBoundary>
   );
 }

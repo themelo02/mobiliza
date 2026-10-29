@@ -1078,7 +1078,10 @@ export const SupervisorHistoryView: React.FC = () => {
                   Detalhes do Envio &bull; {selectedSub.data}
                 </h3>
                 <div className="text-xs text-slate-500">
-                  Enviado em {new Date(selectedSub.dataEnvio).toLocaleString('pt-PT')}
+                  Enviado em{' '}
+                  {selectedSub.dataEnvio
+                    ? new Date(selectedSub.dataEnvio).toLocaleString('pt-PT')
+                    : selectedSub.data || 'Registado'}
                 </div>
               </div>
               <button
